@@ -3,7 +3,7 @@ from dotenv import load_dotenv
 import os
 import time
 
-load_dotenv()
+dotenv.load_dotenv()
 
 SERVER_IP = os.getenv("REDIS_IP")
 SERVER_PORT = os.getenv("REDIS_PORT")
