@@ -2,10 +2,11 @@
 
 import { type Game, type User } from "@/utils/database_functions";
 import { useState, useEffect } from "react";
+import { useRouter } from "next/navigation";
 import MainDashboard from "./MainDashboard";
 import Shops from "./Shops";
 import Transactions from "./Transactions";
-import { TbChartLine, TbShoppingBag, TbList } from "react-icons/tb";
+import { TbChartLine, TbShoppingBag, TbList, TbDoorExit } from "react-icons/tb";
 
 interface GameDashboardProps {
   game: Game;
@@ -19,6 +20,7 @@ export default function GameDashboard({
   currentUser,
 }: GameDashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
+  const router = useRouter();
 
   const tabs = [
     { id: "dashboard" as Tab, icon: TbChartLine },
@@ -26,10 +28,14 @@ export default function GameDashboard({
     { id: "transactions" as Tab, icon: TbList },
   ];
 
+  const handleLeaveGame = () => {
+    router.push("/");
+  };
+
   return (
     <div className="flex h-screen">
       {/* Vertical Navigation Bar */}
-      <nav className="w-16 bg-[var(--card-bg)] border-r-2 border-[var(--border)] flex flex-col p-2">
+      <nav className="w-16 bg-[var(--card-bg)] border-r-2 border-[var(--border)] flex flex-col p-2 items-center">
         {/* Logo/Title */}
         <div className="mb-4 py-2">
           <h1 className="font-retro text-2xl text-[var(--primary-light)] text-center">
@@ -38,7 +44,7 @@ export default function GameDashboard({
         </div>
 
         {/* Navigation Items */}
-        <div className="flex flex-col gap-2">
+        <div className="flex flex-col gap-2 flex-1 items-center">
           {tabs.map((tab) => {
             const Icon = tab.icon;
             return (
@@ -46,7 +52,7 @@ export default function GameDashboard({
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
                 className={`
-                  p-3 border-2 transition-all flex items-center justify-center
+                  w-10 h-10 border-2 transition-all flex items-center justify-center
                   ${
                     activeTab === tab.id
                       ? "bg-[var(--primary)] border-[var(--primary-light)] text-[var(--background)]"
@@ -54,11 +60,20 @@ export default function GameDashboard({
                   }
                 `}
               >
-                <Icon size={24} />
+                <Icon size={20} />
               </button>
             );
           })}
         </div>
+
+        {/* Leave Game Button */}
+        <button
+          onClick={handleLeaveGame}
+          className="w-10 h-10 border-2 border-[var(--danger)] bg-transparent text-[var(--danger)] hover:bg-[var(--danger)] hover:text-white transition-all flex items-center justify-center"
+          title="Leave Game"
+        >
+          <TbDoorExit size={20} />
+        </button>
       </nav>
 
       {/* Main Content Area */}
