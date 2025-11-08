@@ -42,7 +42,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
 
-  const currentPrice = game.coin[game.coin.length - 1] || 100;
+  const currentPrice = Number(game.coin.at(-1) ?? 100);
 
   useEffect(() => {
     if (!game.startTime || !game.isStarted) {
@@ -55,7 +55,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
       // Handle Firestore Timestamp objects
       let startTime: Date;
-      if (game.startTime && typeof game.startTime === 'object' && 'seconds' in game.startTime) {
+      if (!game.startTime) {
+        setTimeRemaining("--:--");
+        return;
+      } else if (typeof game.startTime === 'object' && 'seconds' in game.startTime) {
         // Firestore Timestamp
         startTime = new Date((game.startTime as any).seconds * 1000);
       } else if (game.startTime instanceof Date) {
@@ -112,6 +115,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       setActionLoading(null);
     }
   };
+
+  const usd = Number(currentUser.usd ?? 0);
+  const coins = Number(currentUser.coins ?? 0);
+  const bots = Array.isArray(currentUser.bots) ? currentUser.bots : [];
 
   // Prepare chart data
   const chartData = {
@@ -183,7 +190,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   };
 
   // Calculate portfolio value
-  const portfolioValue = currentUser.usd + (currentUser.coins * currentPrice);
+  const portfolioValue = usd + (coins * currentPrice);
   const portfolioChange = ((portfolioValue - 10000) / 10000) * 100;
 
   return (
@@ -236,13 +243,13 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
               <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
                 <div className="text-sm text-[var(--foreground)]">US Dollars</div>
                 <div className="font-retro text-2xl text-[var(--success)]">
-                  ${currentUser.usd.toFixed(2)}
+                  ${usd.toFixed(2)}
                 </div>
               </div>
               <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
                 <div className="text-sm text-[var(--foreground)]">Banana Coins</div>
                 <div className="font-retro text-2xl text-[var(--primary)]">
-                  {currentUser.coins.toFixed(2)} BC
+                  {coins.toFixed(2)} BC
                 </div>
               </div>
             </div>
@@ -288,8 +295,8 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           </Card>
 
           {/* Bots */}
-          <Card title={`BOTS (${currentUser.bots.length})`} padding="lg">
-            {currentUser.bots.length === 0 ? (
+          <Card title={`BOTS (${bots.length})`} padding="lg">
+            {bots.length === 0 ? (
               <div className="text-center py-6">
                 <p className="text-[var(--foreground)] mb-3">
                   No bots yet
@@ -300,7 +307,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
               </div>
             ) : (
               <div className="space-y-3">
-                {currentUser.bots.map((bot) => (
+                {bots.map((bot) => (
                   <div
                     key={bot.botId}
                     className="p-3 border-2 border-[var(--border)] bg-[var(--background)] hover:border-[var(--primary)] transition-colors"
