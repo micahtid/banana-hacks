@@ -1,0 +1,444 @@
+================================================================================
+APP.PY - BANANA COIN TRADING GAME API
+================================================================================
+
+OVERVIEW
+--------
+app.py is the main FastAPI application that serves as the REST API layer for the
+Banana Coin trading game system. It orchestrates game initialization, user
+management, trading operations, bot automation, and market updates. The file
+acts as the central coordinator that integrates all other modules in the
+back-end directory.
+
+ARCHITECTURE
+------------
+app.py follows a layered architecture:
+
+1. API Layer (app.py)
+   - FastAPI endpoints for HTTP requests
+   - Request/response validation using Pydantic models
+   - Error handling and logging
+   - CORS middleware for cross-origin requests
+
+2. Business Logic Layer (GameState class)
+   - Manages the complete state of a game instance
+   - Coordinates between Market, User, UserWallet, and BotManager
+
+3. Domain Layer (market.py, user.py, wallet.py, bot.py)
+   - Core business entities and their behaviors
+   - Redis persistence (via market.py and redis_helper.py)
+
+================================================================================
+MODULE RELATIONSHIPS
+================================================================================
+
+1. MARKET.PY
+-----------
+Purpose: Manages the market state, price history, and volatility calculations.
+
+Integration with app.py:
+- Market class is instantiated in /startGame endpoint with initial_price and game_id
+- Market.market_data (MarketData instance) provides:
+  * current_price: Current BananaCoin price in USD
+  * price_history: Historical prices (one per tick/second)
+  * current_tick: Game progression counter
+  * volatility: Calculated from recent price returns
+- Market.updateMarket() is called in /updateMarket endpoint to:
+  * Increment current_tick
+  * Generate new price using random walk with drift
+  * Calculate volatility from recent returns
+  * Persist state to Redis automatically
+- Market.addUser() registers users in the market
+- Market persists to Redis using keys:
+  * "market:{game_id}" - Basic market info
+  * "market:{game_id}:data" - MarketData details
+
+Key Methods Used:
+- Market(initial_price, game_id) - Constructor
+- market.updateMarket() - Advance market state
+- market.market_data.current_price - Get current price
+- market.market_data.current_tick - Get current tick
+- market.market_data.volatility - Get volatility
+- market.addUser(user_id) - Register user
+
+
+2. USER.PY
+----------
+Purpose: Represents a player with portfolio (coins/USD), trading capabilities,
+         and bot associations.
+
+Integration with app.py:
+- User instances are created in /startGame for each participant
+- User tracks:
+  * coins: BananaCoin balance
+  * usd: USD balance
+  * last_interaction_v: Last interaction tick
+  * bots: List of bot IDs and names associated with user
+- User.buy_bc() and User.sell_bc() are called in /executeTrade for manual trades
+- User.add_bot() links bot IDs to the user when bots are added via /addBot
+- User.to_dict() serializes user data for API responses
+- User state is synchronized with UserWallet after bot trades
+
+Key Methods Used:
+- User(user_id, user_name, coins, usd, last_interaction_v) - Constructor
+- user.buy_bc(amount, price, current_tick) - Execute buy trade
+- user.sell_bc(amount, price, current_tick) - Execute sell trade
+- user.add_bot(bot_id, bot_name) - Associate bot with user
+- user.to_dict() - Serialize for API response
+
+
+3. WALLET.PY
+------------
+Purpose: Lightweight portfolio representation used by bots for trading operations.
+
+Integration with app.py:
+- UserWallet instances are created alongside User instances in /startGame
+- UserWallet is the interface that bots use for trading (via BotManager)
+- UserWallet tracks:
+  * coins: BananaCoin balance
+  * usd: USD balance
+  * last_interaction_tick: Last tick when wallet was modified
+- After bot trades execute, User state is synced FROM UserWallet:
+  * user.coins = wallet.coins
+  * user.usd = wallet.usd
+  * user.last_interaction_v = wallet.last_interaction_tick
+- UserWallet is passed to BotManager.run_all_bots() for bot trading operations
+
+Key Methods Used:
+- UserWallet(user_id, coins, usd, last_interaction_tick) - Constructor
+- wallet.get_portfolio_value(current_price) - Calculate total value
+- wallet.can_buy(amount, price) - Check if purchase is possible
+- wallet.can_sell(amount) - Check if sale is possible
+
+Why Two Classes (User vs UserWallet)?
+- User: Full-featured class with bot management, serialization, and manual trading
+- UserWallet: Minimal dataclass optimized for bot trading operations
+- Separation allows bots to operate on wallets without full User overhead
+- User state is authoritative and synced from wallets after bot trades
+
+
+4. BOT.PY
+---------
+Purpose: Provides automated trading bots with various strategies and a manager
+         to coordinate all bot operations.
+
+Integration with app.py:
+- BotManager is instantiated in /startGame and stored in GameState
+- BotManager manages all bots across all users in a game
+- Bot types available:
+  * random: Random trades to prevent coin decay
+  * momentum: Trend-following using moving averages
+  * mean_reversion: Counter-trend trading on price extremes
+  * market_maker: Maintains balanced portfolio ratios
+  * hedger: Adjusts exposure based on volatility
+- BotManager.add_bot_to_user() is called in /addBot endpoint:
+  * Creates bot instance with current market state
+  * Registers bot in BotManager's registry
+  * Returns bot_id for tracking
+- BotManager.run_all_bots() is called in /updateMarket endpoint:
+  * Generates trading signals for each active bot
+  * Executes trades on UserWallet instances
+  * Returns results with trade details and performance metrics
+- BotManager.get_all_bot_performance() is called in /botPerformance endpoint:
+  * Calculates metrics for all bots (trades, P/L, win rate, etc.)
+- Bot trading modifies UserWallet directly, then User state is synced
+
+Key Classes:
+- TradingBot: Base class for all bot strategies
+- BotState: Tracks bot-specific metrics (trades, P/L, creation tick)
+- BotManager: Central registry and executor for all bots
+
+Key Methods Used:
+- BotManager() - Constructor
+- bot_manager.add_bot_to_user(user_id, bot_type, current_tick, current_price, parameters)
+- bot_manager.run_all_bots(market_data, wallets) - Execute all bot trades
+- bot_manager.get_all_bot_performance(market_data, wallets) - Get metrics
+- bot_manager.get_bot(bot_id) - Retrieve bot by ID
+
+
+5. REDIS_HELPER.PY
+------------------
+Purpose: Provides Redis connection management and datetime serialization utilities.
+
+Integration with app.py:
+- Indirectly used through Market class
+- Market.save_to_redis() uses get_redis_connection() to persist state
+- Market.load_from_redis() can restore market state
+- Currently app.py uses in-memory game storage (games dict), but Market
+  automatically persists to Redis for durability
+- Redis keys follow pattern: "market:{game_id}" and "market:{game_id}:data"
+
+Key Functions:
+- get_redis_connection() - Returns Redis client with env config
+- serialize_datetime(dt) - Convert datetime to ISO string
+- deserialize_datetime(dt_str) - Convert ISO string to datetime
+
+================================================================================
+GAME STATE MANAGEMENT
+================================================================================
+
+GameState Class:
+- Encapsulates all components of a single game instance
+- Contains:
+  * game_id: Unique identifier
+  * market: Market instance
+  * users: Dict[str, User] - All players
+  * wallets: Dict[str, UserWallet] - Bot trading interfaces
+  * bot_manager: BotManager instance
+  * created_at: Timestamp
+  * is_active: Game status flag
+
+Global Storage:
+- games: Dict[str, GameState] - In-memory storage of all active games
+- Keyed by game_id (UUID string)
+- Note: In production, this should be replaced with Redis/database
+
+State Synchronization Flow:
+1. Manual trades (/executeTrade):
+   User.buy_bc() or User.sell_bc() → Update User state
+   → Sync to UserWallet (wallet.coins = user.coins, etc.)
+
+2. Bot trades (/updateMarket):
+   BotManager.run_all_bots() → Modify UserWallet directly
+   → Sync to User (user.coins = wallet.coins, etc.)
+
+This ensures User is always the source of truth for API responses, while
+bots operate on lightweight UserWallet instances.
+
+================================================================================
+API ENDPOINTS
+================================================================================
+
+POST /startGame
+---------------
+Purpose: Initialize a new trading game
+Request: GameInitRequest (duration, userIDs, userNames, initial_price, starting_coins, starting_usd)
+Response: GameInitResponse (gameID, message, market, users)
+
+Flow:
+1. Generate unique game_id (UUID)
+2. Create Market with initial_price and game_id
+3. Create User and UserWallet for each userID
+4. Add users to Market
+5. Create BotManager
+6. Create GameState and store in games dict
+7. Return game state
+
+POST /addBot
+-----------
+Purpose: Add an automated trading bot to a user
+Request: BotAddRequest (gameID, userID, bot_type, bot_name, parameters)
+Response: {success, bot_id, bot_name, message}
+
+Flow:
+1. Validate game and user exist
+2. Get current market state (tick, price)
+3. Call BotManager.add_bot_to_user()
+4. Add bot to User.bots list
+5. Return bot information
+
+POST /executeTrade
+-----------------
+Purpose: Execute a manual trade (buy/sell) for a user
+Request: TradeRequest (gameID, userID, action, amount, price)
+Response: {success, action, amount, price, new_balance}
+
+Flow:
+1. Validate game and user exist
+2. Get current market price (or use provided price)
+3. Call User.buy_bc() or User.sell_bc()
+4. Sync User state to UserWallet
+5. Return trade result and new balances
+
+POST /updateMarket/{game_id}
+---------------------------
+Purpose: Advance game by one tick, update market, and run all bots
+Response: {success, current_tick, current_price, volatility, bot_trades_executed}
+
+Flow:
+1. Validate game exists and is active
+2. Call Market.updateMarket() - increments tick, updates price, calculates volatility
+3. Call BotManager.run_all_bots() - executes all bot trades on wallets
+4. Sync UserWallet state back to User instances
+5. Return updated market state
+
+GET /gameState/{game_id}
+-----------------------
+Purpose: Get current state of a game
+Response: GameStateResponse (gameID, current_tick, current_price, volatility, users, market_data)
+
+Flow:
+1. Validate game exists
+2. Call GameState.to_dict() which aggregates:
+   - Market state (price, tick, volatility)
+   - User states (via User.to_dict())
+   - Market data (price history, etc.)
+3. Return complete game state
+
+GET /botPerformance/{game_id}/{user_id}
+---------------------------------------
+Purpose: Get performance metrics for all bots of a specific user
+Response: {user_id, bots: {bot_id: metrics}}
+
+Flow:
+1. Validate game and user exist
+2. Call BotManager.get_all_bot_performance()
+3. Filter results to user's bots only
+4. Return performance metrics
+
+DELETE /game/{game_id}
+---------------------
+Purpose: Delete a game instance
+Response: {success, message}
+
+Flow:
+1. Validate game exists
+2. Mark game as inactive
+3. Remove from games dict
+4. (Note: Market Redis data remains - could be cleaned up)
+
+GET /health
+----------
+Purpose: Health check and API statistics
+Response: {status, timestamp, active_games, total_games}
+
+GET /
+----
+Purpose: API information and endpoint documentation
+Response: {name, version, description, endpoints}
+
+================================================================================
+DATA FLOW EXAMPLES
+================================================================================
+
+Example 1: Starting a Game
+--------------------------
+1. Client POST /startGame with userIDs=["user1", "user2"]
+2. app.py creates Market(initial_price=1.0, game_id="abc-123")
+3. Market initializes MarketData and saves to Redis
+4. app.py creates User and UserWallet for each user
+5. Market.addUser() registers users
+6. BotManager() created
+7. GameState assembled and stored in games["abc-123"]
+8. Response includes game_id and initial state
+
+Example 2: Adding a Bot
+------------------------
+1. Client POST /addBot with gameID="abc-123", userID="user1", bot_type="momentum"
+2. app.py retrieves GameState from games["abc-123"]
+3. Gets current_tick and current_price from market.market_data
+4. BotManager.add_bot_to_user() creates MomentumBot instance
+5. Bot registered in BotManager.bot_registry
+6. User.add_bot() links bot_id to user
+7. Response includes bot_id
+
+Example 3: Market Update with Bot Trading
+------------------------------------------
+1. Client POST /updateMarket/abc-123
+2. Market.updateMarket() executes:
+   - Increments current_tick: 5 → 6
+   - Generates new price: 1.05 → 1.07 (random walk)
+   - Calculates volatility from recent returns
+   - Saves to Redis
+3. BotManager.run_all_bots() executes:
+   - For each active bot:
+     * bot.generate_signal(market_data, wallet) → {'action': 'buy', 'amount': 2.0}
+     * bot.execute_trade(signal, wallet, market_data) → Modifies wallet
+     * Updates bot.state (trades_executed, profit_loss)
+4. For each bot result:
+   - user.coins = wallet.coins (sync)
+   - user.usd = wallet.usd (sync)
+   - user.last_interaction_v = wallet.last_interaction_tick
+5. Response includes updated market state and bot trade count
+
+Example 4: Manual Trade
+-----------------------
+1. Client POST /executeTrade with action="buy", amount=10.0
+2. app.py gets User and MarketData from GameState
+3. User.buy_bc(10.0, price=1.07, tick=6) executes:
+   - Checks: usd >= (10.0 * 1.07) = 10.70
+   - Updates: usd -= 10.70, coins += 10.0
+   - Updates: last_interaction_v = 6
+4. Sync to wallet: wallet.coins = user.coins, wallet.usd = user.usd
+5. Response includes new balances
+
+================================================================================
+ERROR HANDLING & VALIDATION
+================================================================================
+
+Request Validation:
+- Pydantic models (GameInitRequest, BotAddRequest, TradeRequest) validate:
+  * Field types and constraints (gt=0, min_items=1, etc.)
+  * Custom validators (bot_type, action, userNames length)
+  * Automatic type conversion and normalization
+
+Error Responses:
+- 400 Bad Request: Validation errors, insufficient funds, invalid actions
+- 404 Not Found: Game or user not found
+- 500 Internal Server Error: Unexpected exceptions
+
+Logging:
+- INFO: Game creation, bot additions, successful operations
+- WARNING: Missing resources, inactive games
+- ERROR: Validation failures, unexpected errors
+- DEBUG: Detailed operation traces
+
+================================================================================
+DEPENDENCIES & INTEGRATIONS
+================================================================================
+
+External Dependencies:
+- FastAPI: Web framework
+- Pydantic: Request/response validation
+- Uvicorn: ASGI server (for running the app)
+
+Internal Dependencies:
+- market.py: Market and MarketData classes
+- user.py: User class
+- wallet.py: UserWallet class
+- bot.py: BotManager and TradingBot classes
+- redis_helper.py: Redis connection (used indirectly via Market)
+
+Environment:
+- Redis connection configured via redis_helper.py using .env file
+- CORS configured to allow all origins (configurable)
+
+================================================================================
+NOTES & CONSIDERATIONS
+================================================================================
+
+1. In-Memory Storage:
+   - Current implementation uses games dict for game storage
+   - Market data persists to Redis automatically
+   - User/UserWallet state is not persisted (lost on restart)
+   - Production should persist all game state
+
+2. State Synchronization:
+   - User and UserWallet must be kept in sync
+   - Manual trades: User → UserWallet
+   - Bot trades: UserWallet → User
+   - This dual-direction sync ensures consistency
+
+3. Bot Trading:
+   - Bots operate on UserWallet, not User directly
+   - This separation allows bots to trade without full User overhead
+   - Bot trades are atomic per tick (all bots execute before sync)
+
+4. Market Persistence:
+   - Market automatically saves to Redis on creation and updates
+   - Can be restored using Market.load_from_redis(game_id)
+   - User/UserWallet state restoration not implemented
+
+5. Game Lifecycle:
+   - Games are created with /startGame
+   - Games can be deleted with DELETE /game/{game_id}
+   - No automatic cleanup of inactive games
+   - Market Redis data persists after game deletion
+
+6. Concurrency:
+   - FastAPI handles concurrent requests
+   - No explicit locking on game state
+   - Race conditions possible with concurrent updates
+   - Consider adding locks for production use
+
+================================================================================
