@@ -7,41 +7,6 @@ from dataclasses import dataclass, field
 import uuid
 
 # ============================================================================
-# BOT STATE
-# ============================================================================
-
-@dataclass
-class BotState:
-    """Stores bot-specific state and history"""
-    bot_id: str
-    creation_tick: int  # Tick when bot was created
-    trades_executed: int = 0
-    total_profit_loss: float = 0.0
-    last_trade_tick: Optional[int] = None
-    price_at_creation: float = 1.0  # Price when bot was created
-    memory: Dict = field(default_factory=dict)  # Bot-specific memory storage
-    
-    def get_ticks_alive(self, current_tick: int) -> int:
-        """Get how many ticks this bot has been alive"""
-        return current_tick - self.creation_tick
-    
-    def get_prices_since_creation(self, market: market.MarketData) -> List[float]:
-        """Get all prices since this bot was created"""
-        return market.price_history[self.creation_tick:]
-    
-    def get_relative_price(self, market: market.MarketData) -> float:
-        """Get current price relative to price at bot creation"""
-        if self.price_at_creation == 0:
-            return 1.0
-        return market.current_price / self.price_at_creation
-    
-    def update_after_trade(self, profit_loss: float, current_tick: int):
-        """Update bot state after executing a trade"""
-        self.trades_executed += 1
-        self.total_profit_loss += profit_loss
-        self.last_trade_tick = current_tick
-
-# ============================================================================
 # BASE BOT CLASS
 # ============================================================================
 
@@ -547,7 +512,7 @@ class BotManager:
         
         return results
     
-    def get_all_bot_performance(self, market: market.MarketData, wallets: Dict[str, wallet.UserWallet]) -> Dict:
+    def get_all_bot_performance(self, market: MarketData, wallets: Dict[str, UserWallet]) -> Dict:
         """Get performance metrics for all bots"""
         performance = {}
         
@@ -563,7 +528,6 @@ class BotManager:
 # EXAMPLE USAGE
 # ============================================================================
 
-'''
 if __name__ == "__main__":
     # Create market data with simple price array (1 price per second)
     game_start = datetime.now()
@@ -618,4 +582,3 @@ if __name__ == "__main__":
     performance = manager.get_all_bot_performance(market, wallets)
     for bot_id, metrics in performance.items():
         print(f"{metrics['bot_type']} (ID: {bot_id[:8]}): {metrics['trades_executed']} trades, {metrics['ticks_alive']} ticks alive")
-'''

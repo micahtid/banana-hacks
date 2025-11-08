@@ -1,5 +1,3 @@
-from dataclasses import dataclass
-
 @dataclass
 class UserWallet:
     """Represents a user's portfolio"""
