@@ -1,45 +1,9 @@
 import random
 import math
-import market, wallet
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
 import uuid
-
-# ============================================================================
-# BOT STATE
-# ============================================================================
-
-@dataclass
-class BotState:
-    """Stores bot-specific state and history"""
-    bot_id: str
-    creation_tick: int  # Tick when bot was created
-    trades_executed: int = 0
-    total_profit_loss: float = 0.0
-    last_trade_tick: Optional[int] = None
-    price_at_creation: float = 1.0  # Price when bot was created
-    memory: Dict = field(default_factory=dict)  # Bot-specific memory storage
-    
-    def get_ticks_alive(self, current_tick: int) -> int:
-        """Get how many ticks this bot has been alive"""
-        return current_tick - self.creation_tick
-    
-    def get_prices_since_creation(self, market: market.MarketData) -> List[float]:
-        """Get all prices since this bot was created"""
-        return market.price_history[self.creation_tick:]
-    
-    def get_relative_price(self, market: market.MarketData) -> float:
-        """Get current price relative to price at bot creation"""
-        if self.price_at_creation == 0:
-            return 1.0
-        return market.current_price / self.price_at_creation
-    
-    def update_after_trade(self, profit_loss: float, current_tick: int):
-        """Update bot state after executing a trade"""
-        self.trades_executed += 1
-        self.total_profit_loss += profit_loss
-        self.last_trade_tick = current_tick
 
 # ============================================================================
 # BASE BOT CLASS
@@ -64,7 +28,7 @@ class TradingBot:
             price_at_creation=creation_price
         )
         
-    def generate_signal(self, market: market.MarketData, wallet: wallet.UserWallet) -> Dict:
+    def generate_signal(self, market: market.MarketData, wallet: UserWallet) -> Dict:
         """
         Generate a trading signal based on strategy
         
@@ -77,7 +41,7 @@ class TradingBot:
         """
         raise NotImplementedError("Subclasses must implement generate_signal")
     
-    def execute_trade(self, signal: Dict, wallet: wallet.UserWallet, market: market.MarketData) -> Dict:
+    def execute_trade(self, signal: Dict, wallet: UserWallet, market: MarketData) -> Dict:
         """
         Execute the trade signal on the user's wallet
         
@@ -180,7 +144,7 @@ class TradingBot:
             'message': 'Invalid action'
         }
     
-    def get_performance_metrics(self, market: market.MarketData, wallet: wallet.UserWallet) -> Dict:
+    def get_performance_metrics(self, market: MarketData, wallet: UserWallet) -> Dict:
         """Get bot performance statistics"""
         relative_price = self.state.get_relative_price(market)
         ticks_alive = self.state.get_ticks_alive(market.current_tick)
@@ -216,7 +180,7 @@ class RandomTraderBot(TradingBot):
         super().__init__(user_id, bot_id, creation_tick, creation_price, 
                         {**default_params, **(parameters or {})})
     
-    def generate_signal(self, market: market.MarketData, wallet: wallet.UserWallet) -> Dict:
+    def generate_signal(self, market: MarketData, wallet: UserWallet) -> Dict:
         if random.random() > self.parameters['trade_probability']:
             return {'action': 'hold', 'amount': 0.0, 'reason': 'Random skip'}
         
@@ -248,7 +212,7 @@ class MomentumBot(TradingBot):
         super().__init__(user_id, bot_id, creation_tick, creation_price,
                         {**default_params, **(parameters or {})})
     
-    def generate_signal(self, market: market.MarketData, wallet: wallet.UserWallet) -> Dict:
+    def generate_signal(self, market: MarketData, wallet: UserWallet) -> Dict:
         # Use prices since bot was created for more personalized strategy
         prices_since_creation = self.state.get_prices_since_creation(market)
         ticks_alive = len(prices_since_creation)
@@ -295,7 +259,7 @@ class MeanReversionBot(TradingBot):
         super().__init__(user_id, bot_id, creation_tick, creation_price,
                         {**default_params, **(parameters or {})})
     
-    def generate_signal(self, market: market.MarketData, wallet: wallet.UserWallet) -> Dict:
+    def generate_signal(self, market: MarketData, wallet: UserWallet) -> Dict:
         mean_price = market.moving_average(self.parameters['lookback_window'])
         
         # Calculate standard deviation
@@ -346,7 +310,7 @@ class MarketMakerBot(TradingBot):
         super().__init__(user_id, bot_id, creation_tick, creation_price,
                         {**default_params, **(parameters or {})})
     
-    def generate_signal(self, market: market.MarketData, wallet: wallet.UserWallet) -> Dict:
+    def generate_signal(self, market: MarketData, wallet: UserWallet) -> Dict:
         total_value = wallet.get_portfolio_value(market.current_price)
         bc_value = wallet.coins * market.current_price
         current_ratio = bc_value / total_value if total_value > 0 else 0
@@ -396,7 +360,7 @@ class HedgingBot(TradingBot):
         super().__init__(user_id, bot_id, creation_tick, creation_price,
                         {**default_params, **(parameters or {})})
     
-    def generate_signal(self, market: market.MarketData, wallet: wallet.UserWallet) -> Dict:
+    def generate_signal(self, market: MarketData, wallet: UserWallet) -> Dict:
         volatility = market.volatility
         total_value = wallet.get_portfolio_value(market.current_price)
         bc_value = wallet.coins * market.current_price
@@ -513,7 +477,7 @@ class BotManager:
         del self.bot_registry[bot_id]
         return True
     
-    def run_all_bots(self, market: market.MarketData, wallets: Dict[str, wallet.UserWallet]) -> List[Dict]:
+    def run_all_bots(self, market: MarketData, wallets: Dict[str, UserWallet]) -> List[Dict]:
         """Execute all active bots for all users"""
         results = []
         
@@ -547,7 +511,7 @@ class BotManager:
         
         return results
     
-    def get_all_bot_performance(self, market: market.MarketData, wallets: Dict[str, wallet.UserWallet]) -> Dict:
+    def get_all_bot_performance(self, market: MarketData, wallets: Dict[str, UserWallet]) -> Dict:
         """Get performance metrics for all bots"""
         performance = {}
         
@@ -563,7 +527,6 @@ class BotManager:
 # EXAMPLE USAGE
 # ============================================================================
 
-'''
 if __name__ == "__main__":
     # Create market data with simple price array (1 price per second)
     game_start = datetime.now()
@@ -618,4 +581,3 @@ if __name__ == "__main__":
     performance = manager.get_all_bot_performance(market, wallets)
     for bot_id, metrics in performance.items():
         print(f"{metrics['bot_type']} (ID: {bot_id[:8]}): {metrics['trades_executed']} trades, {metrics['ticks_alive']} ticks alive")
-'''
