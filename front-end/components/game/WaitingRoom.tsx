@@ -17,9 +17,10 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
   const isCreator = user?.uid === game.creatorId;
 
   const handleStartGame = async () => {
+    if (!user?.uid) return;
     setIsStarting(true);
     try {
-      await startRoom(game.gameId);
+      await startRoom(game.gameId, user.uid);
     } catch (error) {
       console.error("Failed to start game:", error);
       setIsStarting(false);

@@ -1,6 +1,5 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider, signInWithRedirect, signInWithPopup } from "firebase/auth";
-import { getFirestore, collection, addDoc, doc, getDoc, updateDoc, onSnapshot, query, where, Timestamp } from "firebase/firestore";
+import { getAuth, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 
 // initializing firebase: auth and login
 // sign in and sign out functions
@@ -28,13 +27,6 @@ export const getUserAuth = (alreadyInit: boolean) => {
   return auth;
 }
 
-export const getFireStore = (alreadyInit: boolean) => {
-  if (!alreadyInit) {
-    const app = initializeFirebase();
-  }
-  const firestore = getFirestore();
-  return firestore;
-}
 
 export const signIn = () => {
   const auth = getUserAuth(false);
@@ -102,34 +94,24 @@ export const createRoom = async (
   gameDuration: number,
   maxPlayers: number
 ): Promise<string> => {
-  const firestore = getFireStore(true);
+  const response = await fetch('/api/game/create', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      userId: creatorId,
+      userName: creatorName,
+      duration: gameDuration,
+      maxPlayers,
+    }),
+  });
 
-  const newGame: Omit<Game, 'gameId'> = {
-    isStarted: false,
-    isEnded: false,
-    users: [
-      {
-        userId: creatorId,
-        userName: creatorName,
-        bots: [],
-        coins: 0,
-        usd: 10000, // Starting USD
-        lastInteractionV: 0,
-        lastInteractionT: new Date(),
-      },
-    ],
-    coin: [100], // Starting coin price
-    interactions: [],
-    eventTimer: new Date(),
-    startTime: null,
-    endTime: null,
-    gameDuration,
-    maxPlayers,
-    creatorId,
-  };
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to create room');
+  }
 
-  const docRef = await addDoc(collection(firestore, 'games'), newGame);
-  return docRef.id;
+  const data = await response.json();
+  return data.gameId;
 };
 
 /**
@@ -143,42 +125,16 @@ export const joinRoom = async (
   userId: string,
   userName: string
 ): Promise<void> => {
-  const firestore = getFireStore(true);
-  const gameRef = doc(firestore, 'games', gameId);
-  const gameSnap = await getDoc(gameRef);
-
-  if (!gameSnap.exists()) {
-    throw new Error('Game not found');
-  }
-
-  const gameData = gameSnap.data() as Game;
-
-  if (gameData.isStarted) {
-    throw new Error('Game has already started');
-  }
-
-  if (gameData.users.length >= gameData.maxPlayers) {
-    throw new Error('Game is full');
-  }
-
-  // Check if user already in game
-  if (gameData.users.some((u) => u.userId === userId)) {
-    throw new Error('User already in game');
-  }
-
-  const newUser: User = {
-    userId,
-    userName,
-    bots: [],
-    coins: 0,
-    usd: 10000,
-    lastInteractionV: 0,
-    lastInteractionT: new Date(),
-  };
-
-  await updateDoc(gameRef, {
-    users: [...gameData.users, newUser],
+  const response = await fetch('/api/game/join', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, userId, userName }),
   });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to join room');
+  }
 };
 
 /**
@@ -191,37 +147,49 @@ export const getRoom = (
   gameId: string,
   onUpdate: (game: Game | null) => void
 ) => {
-  const firestore = getFireStore(true);
-  const gameRef = doc(firestore, 'games', gameId);
+  let intervalId: NodeJS.Timeout;
 
-  return onSnapshot(gameRef, (docSnap) => {
-    if (docSnap.exists()) {
-      const data = docSnap.data();
-      onUpdate({ ...data, gameId: docSnap.id } as Game);
-    } else {
+  const fetchGame = async () => {
+    try {
+      const response = await fetch(`/api/game/${gameId}`);
+      if (response.ok) {
+        const data = await response.json();
+        onUpdate(data.game);
+      } else {
+        onUpdate(null);
+      }
+    } catch (error) {
+      console.error('Error fetching game:', error);
       onUpdate(null);
     }
-  });
+  };
+
+  // Initial fetch
+  fetchGame();
+
+  // Poll every 2 seconds for updates
+  intervalId = setInterval(fetchGame, 2000);
+
+  // Return unsubscribe function
+  return () => clearInterval(intervalId);
 };
 
 /**
  * Start the game (only creator can call this)
  * @param gameId - Game ID
+ * @param userId - User ID (must be creator)
  */
-export const startRoom = async (gameId: string): Promise<void> => {
-  const firestore = getFireStore(true);
-  const gameRef = doc(firestore, 'games', gameId);
-
-  const startTime = new Date();
-
-  await updateDoc(gameRef, {
-    isStarted: true,
-    startTime: startTime,
-    eventTimer: startTime,
+export const startRoom = async (gameId: string, userId: string): Promise<void> => {
+  const response = await fetch('/api/game/start', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, userId }),
   });
 
-  // TO UPDATE: Call backend startGame(gameId) here
-  // This will initialize the game state and start the market simulation
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to start room');
+  }
 };
 
 /**
@@ -229,17 +197,16 @@ export const startRoom = async (gameId: string): Promise<void> => {
  * @param gameId - Game ID
  */
 export const endRoom = async (gameId: string): Promise<void> => {
-  const firestore = getFireStore(true);
-  const gameRef = doc(firestore, 'games', gameId);
-
-  const endTime = new Date();
-
-  await updateDoc(gameRef, {
-    isEnded: true,
-    endTime: endTime,
+  const response = await fetch('/api/game/end', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId }),
   });
 
-  // TO UPDATE: Call backend to finalize game results and calculate winners
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to end room');
+  }
 };
 
 // ============================================
@@ -248,35 +215,46 @@ export const endRoom = async (gameId: string): Promise<void> => {
 
 /**
  * Buy banana coins
- * TO UPDATE: This will call the backend buy(userId, numBC, gameId)
  */
 export const buyCoins = async (
   userId: string,
   numBC: number,
   gameId: string
 ): Promise<void> => {
-  // TO UPDATE: Call backend API
-  // await fetch('/api/buy', { method: 'POST', body: JSON.stringify({ userId, numBC, gameId }) })
-  console.log('TO UPDATE: Implement backend call for buyCoins', { userId, numBC, gameId });
+  const response = await fetch('/api/game/buy-coins', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, userId, amount: numBC }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to buy coins');
+  }
 };
 
 /**
  * Sell banana coins
- * TO UPDATE: This will call the backend sell(userId, numBC, gameId)
  */
 export const sellCoins = async (
   userId: string,
   numBC: number,
   gameId: string
 ): Promise<void> => {
-  // TO UPDATE: Call backend API
-  // await fetch('/api/sell', { method: 'POST', body: JSON.stringify({ userId, numBC, gameId }) })
-  console.log('TO UPDATE: Implement backend call for sellCoins', { userId, numBC, gameId });
+  const response = await fetch('/api/game/sell-coins', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, userId, amount: numBC }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to sell coins');
+  }
 };
 
 /**
  * Buy a bot
- * TO UPDATE: This will call the backend buyBot(botPriceBC, userId)
  */
 export const buyBot = async (
   botPriceBC: number,
@@ -285,17 +263,34 @@ export const buyBot = async (
   botType: 'premade' | 'custom',
   customPrompt?: string
 ): Promise<void> => {
-  // TO UPDATE: Call backend API
-  // await fetch('/api/buyBot', { method: 'POST', body: JSON.stringify({ botPriceBC, userId, gameId, botType, customPrompt }) })
-  console.log('TO UPDATE: Implement backend call for buyBot', { botPriceBC, userId, gameId, botType, customPrompt });
+  const response = await fetch('/api/bot/buy', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, userId, botType, cost: botPriceBC, customPrompt }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to buy bot');
+  }
 };
 
 /**
  * Toggle bot active/inactive
- * TO UPDATE: This will call the backend toggleBot(botId)
  */
-export const toggleBot = async (botId: string): Promise<void> => {
-  // TO UPDATE: Call backend API
-  // await fetch('/api/toggleBot', { method: 'POST', body: JSON.stringify({ botId }) })
-  console.log('TO UPDATE: Implement backend call for toggleBot', { botId });
+export const toggleBot = async (
+  botId: string,
+  userId: string,
+  gameId: string
+): Promise<void> => {
+  const response = await fetch('/api/bot/toggle', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ gameId, userId, botId }),
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to toggle bot');
+  }
 };
