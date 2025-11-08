@@ -1,4 +1,9 @@
-.env*
+.env
+
+front-end/.next
+front-end/node_modules
+front-end/nul
+
 .specstory/**
 back-end/venv/**
 back-end/__pycache__/**
