@@ -342,4 +342,3 @@ async def root():
             "DELETE /game/{game_id}": "Delete a game"
         }
     }
-    
