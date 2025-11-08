@@ -187,22 +187,25 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const portfolioChange = ((portfolioValue - 10000) / 10000) * 100;
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden">
-      <div className="grid grid-cols-[65fr,35fr] gap-6 h-full p-8">
-        {/* Left Column - Market Graph */}
-        <div className="flex flex-col min-h-0">
-          <div className="flex items-center justify-between mb-4">
-            <h2 className="font-retro text-4xl text-[var(--primary-light)]">
-              MAIN DASHBOARD
-            </h2>
-            <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
-              <div className="text-sm text-[var(--foreground)] mb-1">TIME REMAINING</div>
-              <div className="font-retro text-3xl text-[var(--primary)] text-center">
-                {timeRemaining}
-              </div>
-            </div>
+    <div className="h-screen flex flex-col overflow-hidden p-8">
+      {/* Header with Timer */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="font-retro text-4xl text-[var(--primary-light)]">
+          MAIN DASHBOARD
+        </h2>
+        <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
+          <div className="text-sm text-[var(--foreground)] mb-1">TIME REMAINING</div>
+          <div className="font-retro text-3xl text-[var(--primary)] text-center">
+            {timeRemaining}
           </div>
-          <Card title="BANANA COIN MARKET" padding="lg" className="flex-1 flex flex-col overflow-hidden">
+        </div>
+      </div>
+
+      {/* Two Column Layout */}
+      <div style={{ display: 'grid', gridTemplateColumns: '65% 35%', gap: '1.5rem' }} className="flex-1 min-h-0">
+        {/* Left Column - Market Graph ONLY */}
+        <div className="flex flex-col min-h-0 overflow-hidden">
+          <Card title="BANANA COIN MARKET" padding="lg" className="h-full flex flex-col">
             <div className="flex-1 min-h-0">
               <Line data={chartData} options={chartOptions} />
             </div>
@@ -225,7 +228,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           </Card>
         </div>
 
-        {/* Right Column - Wallet, Actions, Bots */}
+        {/* Right Column - Wallet, Actions, Bots with Scroll */}
         <div className="flex flex-col gap-4 min-h-0 overflow-y-auto pr-2">
           {/* Wallet */}
           <Card title="WALLET" padding="lg">
