@@ -1,0 +1,4 @@
+.env*
+.specstory/**
+back-end/venv/**
+back-end/__pycache__/**
