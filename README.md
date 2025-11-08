@@ -20,9 +20,9 @@
         {
           "botId": "string",
           "botName": "string",
-          "startingUsdBalance": "int",
-          "usdBalance": "int",
-          "coinBalance": "int",
+          "startingUsdBalance": "float",
+          "usdBalance": "float",
+          "coinBalance": "float",
           "isActive": "boolean"
         }
       ]
