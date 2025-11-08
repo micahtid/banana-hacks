@@ -1,0 +1,21 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Games collection rules
+    match /games/{gameId} {
+      // Allow authenticated users to read any game
+      allow read: if request.auth != null;
+
+      // Allow authenticated users to create new games
+      allow create: if request.auth != null;
+
+      // Allow updates to games (for joining, starting, ending, and game actions)
+      allow update: if request.auth != null;
+
+      // Only allow deletion by the game creator
+      allow delete: if request.auth != null &&
+                      request.auth.uid == resource.data.creatorId;
+    }
+  }
+}
