@@ -4,14 +4,14 @@ import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { type Game, type User } from "@/utils/database_functions";
 import { useState } from "react";
-import { FaUser, FaRobot } from "react-icons/fa";
+import { FaUser } from "react-icons/fa";
 
 interface TransactionsProps {
   game: Game;
   currentUser: User;
 }
 
-type TabType = "users" | "minions";
+type TabType = "buy" | "sell";
 
 // Helper function to get display name for a transaction actor
 // Formats minion names as username_botname_number and keeps user names as-is
@@ -97,11 +97,11 @@ function getTimeAgo(timestamp: string | number | Date | undefined): string {
 }
 
 export default function Transactions({ game, currentUser }: TransactionsProps) {
-  const [activeTab, setActiveTab] = useState<TabType>("users");
+  const [activeTab, setActiveTab] = useState<TabType>("buy");
   const [showAll, setShowAll] = useState(false);
 
-  // Get all interactions/transactions
-  const interactions = game.interactions || [];
+  // Get all interactions/transactions - filter to only user transactions (no bots)
+  const allInteractions = game.interactions || [];
 
   // Collect all bot identifiers from all players for identification
   const allBotIdentifiers = new Set<string>();
@@ -131,47 +131,54 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
 
   // Helper function to check if a transaction is from a minion
   const isTransactionFromMinion = (interaction: any): boolean => {
-    if (!interaction.name && !interaction.interactionName) return false;
-
-    const name = (interaction.name || "").toLowerCase();
-    const interactionName = (interaction.interactionName || "").toLowerCase();
-    const description = (interaction.interactionDescription || "").toLowerCase();
-
-    // Direct keyword checks
-    if (name.includes("bot") || name.includes("minion") ||
-        interactionName.includes("bot") || interactionName.includes("minion") ||
-        description.includes("bot") || description.includes("minion")) {
+    // First check: if backend explicitly marks it as a bot transaction
+    if (interaction.is_bot === true || interaction.isBot === true) {
       return true;
     }
 
-    // Check against all known bot identifiers
+    // Second check: if the name field contains bot/minion keywords
+    const name = (interaction.name || "").toLowerCase();
+    if (name.includes("bot_") || name.startsWith("bot_")) {
+      return true;
+    }
+
+    // Third check: match against known bot names from players
     if (Array.from(allBotIdentifiers).some(identifier =>
-      name.includes(identifier) ||
-      interactionName.includes(identifier) ||
-      description.includes(identifier)
+      name.includes(identifier.toLowerCase())
     )) {
       return true;
     }
 
-    // Check if it's NOT a known player name (if it's not a player, might be a bot)
-    const isKnownPlayer = Array.from(allPlayerNames).some(playerName =>
-      name.includes(playerName) || interactionName.includes(playerName)
-    );
-
-    // If name contains "Bot_" prefix, it's definitely a bot
-    if (name.startsWith("bot_") || interactionName.startsWith("bot_")) {
-      return true;
-    }
-
+    // Otherwise, assume it's a user transaction
     return false;
   };
 
-  // Separate user and minion transactions
-  const userTransactions = interactions.filter((interaction) => !isTransactionFromMinion(interaction));
-  const minionTransactions = interactions.filter((interaction) => isTransactionFromMinion(interaction));
+  // Filter to only user transactions (no bots/minions)
+  const userTransactions = allInteractions.filter((interaction) => {
+    const isBot = isTransactionFromMinion(interaction);
+    // Debug: log first few interactions to help troubleshoot
+    if (allInteractions.indexOf(interaction) < 3) {
+      console.log('[Transactions] Interaction:', {
+        name: interaction.name,
+        type: interaction.type,
+        is_bot: interaction.is_bot,
+        isBot: interaction.isBot,
+        filtered: isBot
+      });
+    }
+    return !isBot;
+  });
+
+  // Separate user transactions by type (buy/sell)
+  const buyTransactions = userTransactions.filter((interaction) =>
+    interaction.type && interaction.type.toLowerCase() === "buy"
+  );
+  const sellTransactions = userTransactions.filter((interaction) =>
+    interaction.type && interaction.type.toLowerCase() === "sell"
+  );
 
   // Get the appropriate list based on active tab
-  const displayTransactions = activeTab === "users" ? userTransactions : minionTransactions;
+  const displayTransactions = activeTab === "buy" ? buyTransactions : sellTransactions;
 
   // Sort by most recent and limit to 10 if not showing all
   const sortedTransactions = [...displayTransactions].reverse();
@@ -199,9 +206,9 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
           TRANSACTIONS
         </h2>
         <div className="text-right">
-          <div className="text-sm text-[var(--foreground)]">Total Trades</div>
+          <div className="text-sm text-[var(--foreground)]">Total User Trades</div>
           <div className="font-retro text-3xl text-[var(--primary)]">
-            {interactions.length}
+            {userTransactions.length}
           </div>
         </div>
       </div>
@@ -211,37 +218,35 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
         <div className="flex gap-3">
           <button
             onClick={() => {
-              setActiveTab("users");
+              setActiveTab("buy");
               setShowAll(false);
             }}
             className={`
               font-retro text-lg px-8 py-3 border-2 transition-all flex items-center gap-2
               ${
-                activeTab === "users"
-                  ? "bg-[var(--primary)] border-[var(--primary-light)] text-[var(--background)]"
-                  : "bg-transparent border-[var(--border)] text-[var(--foreground)] hover:border-[var(--primary)]"
+                activeTab === "buy"
+                  ? "bg-[var(--success)] border-green-300 text-white"
+                  : "bg-transparent border-[var(--border)] text-[var(--foreground)] hover:border-[var(--success)]"
               }
             `}
           >
-            <FaUser />
-            USERS
+            BUY
           </button>
           <button
             onClick={() => {
-              setActiveTab("minions");
+              setActiveTab("sell");
               setShowAll(false);
             }}
             className={`
               font-retro text-lg px-8 py-3 border-2 transition-all flex items-center gap-2
               ${
-                activeTab === "minions"
-                  ? "bg-[var(--accent)] border-orange-300 text-white"
-                  : "bg-transparent border-[var(--border)] text-[var(--foreground)] hover:border-[var(--accent)]"
+                activeTab === "sell"
+                  ? "bg-[var(--danger)] border-red-300 text-white"
+                  : "bg-transparent border-[var(--border)] text-[var(--foreground)] hover:border-[var(--danger)]"
               }
             `}
           >
-            <FaRobot />
-            MINIONS
+            SELL
           </button>
         </div>
       </Card>
@@ -254,9 +259,9 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
               No {activeTab} transactions yet
             </p>
             <p className="text-sm text-[var(--foreground)]">
-              {activeTab === "users"
-                ? "User buy/sell transactions will appear here"
-                : "Minion trading activity will appear here"}
+              {activeTab === "buy"
+                ? "User buy transactions will appear here"
+                : "User sell transactions will appear here"}
             </p>
           </div>
         ) : (
@@ -267,7 +272,6 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
                 if (!interaction.name || !interaction.type) return null;
 
                 const isCurrentUser = interaction.name === currentUser.userName;
-                const isMinion = activeTab === "minions";
 
                 return (
                   <div
@@ -277,15 +281,11 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
                     <div className="flex items-center justify-between">
                       {/* Left: Trader Info */}
                       <div className="flex items-center gap-3">
-                        {isMinion ? (
-                          <FaRobot className="text-2xl text-[var(--accent)]" />
-                        ) : (
-                          <FaUser className="text-2xl text-[var(--primary)]" />
-                        )}
+                        <FaUser className="text-2xl text-[var(--primary)]" />
                         <div>
                           <div className="flex items-center gap-2">
                             <span className="font-retro text-lg text-[var(--primary-light)]">
-                              {getDisplayName(interaction.name, game)}
+                              {interaction.name}
                             </span>
                             {isCurrentUser && (
                               <span className="text-xs bg-[var(--primary)] text-[var(--background)] px-2 py-1 font-bold">
@@ -302,7 +302,7 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
                       {/* Right: Transaction Details */}
                       <div className="text-right">
                         <div className="font-retro text-2xl text-[var(--primary)]">
-                          {interaction.value ? Math.abs(interaction.value).toFixed(2) : "0.00"} BC
+                          {interaction.value ? (Math.abs(interaction.value) / 100).toFixed(2) : "0.00"} BC
                         </div>
                         <div className="text-xs text-[var(--foreground)]">
                           {getTimeAgo((interaction as any).timestamp)}
@@ -347,10 +347,10 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
         <Card padding="lg">
           <div className="text-center">
             <div className="text-sm text-[var(--foreground)] mb-1">
-              {activeTab === "users" ? "User" : "Minion"} Buys
+              Total User Buys
             </div>
             <div className="font-retro text-2xl text-[var(--success)]">
-              {displayTransactions.filter((i) => i.type && i.type.toLowerCase() === "buy").length}
+              {buyTransactions.length}
             </div>
           </div>
         </Card>
@@ -358,10 +358,10 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
         <Card padding="lg">
           <div className="text-center">
             <div className="text-sm text-[var(--foreground)] mb-1">
-              {activeTab === "users" ? "User" : "Minion"} Sells
+              Total User Sells
             </div>
             <div className="font-retro text-2xl text-[var(--danger)]">
-              {displayTransactions.filter((i) => i.type && i.type.toLowerCase() === "sell").length}
+              {sellTransactions.length}
             </div>
           </div>
         </Card>
