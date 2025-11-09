@@ -623,23 +623,10 @@ class Bot:
         game_data['totalBc'] = total_bc - amount
         game_data['totalUsd'] = total_usd + cost
         
-        # Update user wallet if user_id is provided
-        if user_id and 'players' in game_data:
-            for player in game_data['players']:
-                # Check both userId and playerId for compatibility
-                player_id = player.get('userId') or player.get('playerId')
-                if player_id == user_id:
-                    # Bot's earnings go to the user (update both field name conventions)
-                    # Prevent negative balances
-                    if 'coins' in player:
-                        player['coins'] = max(0.0, player.get('coins', 0.0) + amount)
-                    if 'coinBalance' in player:
-                        player['coinBalance'] = max(0.0, player.get('coinBalance', 0.0) + amount)
-                    if 'usd' in player:
-                        player['usd'] = max(0.0, player.get('usd', 0.0) - cost)
-                    if 'usdBalance' in player:
-                        player['usdBalance'] = max(0.0, player.get('usdBalance', 0.0) - cost)
-                    break
+        # NOTE: Do NOT modify user's balance when bot trades
+        # Bots have their own separate balances (self.usd and self.bc)
+        # The user's balance should only change when they manually buy/sell
+        # Bot balances are displayed separately in the UI but don't affect user's coinBalance/usdBalance
         
         # Get game_id from game_data (need to extract it)
         game_id = game_data.get('gameId', '')
@@ -695,23 +682,10 @@ class Bot:
         game_data['totalBc'] = total_bc + amount
         game_data['totalUsd'] = total_usd - revenue
         
-        # Update user wallet if user_id is provided
-        if user_id and 'players' in game_data:
-            for player in game_data['players']:
-                # Check both userId and playerId for compatibility
-                player_id = player.get('userId') or player.get('playerId')
-                if player_id == user_id:
-                    # Bot's earnings go to the user (update both field name conventions)
-                    # Prevent negative balances
-                    if 'coins' in player:
-                        player['coins'] = max(0.0, player.get('coins', 0.0) - amount)
-                    if 'coinBalance' in player:
-                        player['coinBalance'] = max(0.0, player.get('coinBalance', 0.0) - amount)
-                    if 'usd' in player:
-                        player['usd'] = max(0.0, player.get('usd', 0.0) + revenue)
-                    if 'usdBalance' in player:
-                        player['usdBalance'] = max(0.0, player.get('usdBalance', 0.0) + revenue)
-                    break
+        # NOTE: Do NOT modify user's balance when bot trades
+        # Bots have their own separate balances (self.usd and self.bc)
+        # The user's balance should only change when they manually buy/sell
+        # Bot balances are displayed separately in the UI but don't affect user's coinBalance/usdBalance
         
         # Get game_id from game_data (need to extract it)
         game_id = game_data.get('gameId', '')
@@ -866,6 +840,18 @@ class Bot:
                     # Bot removed, exit
                     print(f"Bot {self.bot_id} removed, stopping")
                     break
+                
+                # Check if game has ended - if so, stop the bot
+                game_key = f"game:{game_id}"
+                if r.exists(game_key):
+                    game_data = r.hgetall(game_key)
+                    is_ended = game_data.get('isEnded', 'false').lower() == 'true'
+                    if is_ended:
+                        # Game has ended, stop this bot
+                        print(f"Bot {self.bot_id} stopping - game {game_id} has ended")
+                        self.is_toggled = False
+                        self.save_to_redis(game_id)
+                        break
                 
                 bot_data = r.hgetall(bot_key)
                 # Python stores True/False, Redis returns as string "True" or "False"

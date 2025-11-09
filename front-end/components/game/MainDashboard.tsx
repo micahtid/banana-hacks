@@ -817,11 +817,11 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
               <div className={`p-3 border-2 transition-colors duration-500 ${rotColors.bg} ${rotColors.border}`}>
                 <div className="text-sm text-[var(--primary)]">Banana Coins</div>
                 <div className={`font-retro text-2xl transition-colors duration-500 ${rotColors.text}`}>
-                  {totalCoins.toFixed(2)} BC
+                  {coins.toFixed(2)} BC
                 </div>
                 {totalMinionCoins > 0 && (
                   <div className="text-xs text-[var(--primary)] mt-1">
-                    (You: {coins.toFixed(2)} + Minions: {totalMinionCoins.toFixed(2)})
+                    Total: {totalCoins.toFixed(2)} BC (You + Minions)
                   </div>
                 )}
               </div>
