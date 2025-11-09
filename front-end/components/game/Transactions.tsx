@@ -3,8 +3,9 @@
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { type Game, type User } from "@/utils/database_functions";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { FaUser } from "react-icons/fa";
+import { TbAlertTriangle } from "react-icons/tb";
 
 interface TransactionsProps {
   game: Game;
@@ -99,6 +100,25 @@ function getTimeAgo(timestamp: string | number | Date | undefined): string {
 export default function Transactions({ game, currentUser }: TransactionsProps) {
   const [activeTab, setActiveTab] = useState<TabType>("buy");
   const [showAll, setShowAll] = useState(false);
+  const [newsText, setNewsText] = useState<string>("NO NEWS");
+  const [isEventActive, setIsEventActive] = useState<boolean>(false);
+  const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
+
+  // Event News Banner Logic
+  useEffect(() => {
+    if (game.eventTriggered && !previousEventTriggered) {
+      setPreviousEventTriggered(true);
+      setNewsText(game.eventTitle || "MARKET EVENT");
+      setIsEventActive(true);
+
+      const timer = setTimeout(() => {
+        setNewsText("NO NEWS");
+        setIsEventActive(false);
+      }, 30000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [game.eventTriggered, previousEventTriggered, game.eventTitle]);
 
   // Get all interactions/transactions - filter to only user transactions (no bots)
   const allInteractions = game.interactions || [];
@@ -199,19 +219,36 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
 
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="font-retro text-4xl text-[var(--primary-light)]">
+    <div>
+      {/* Header with News Flash */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="font-retro text-4xl text-[var(--primary)]">
           TRANSACTIONS
         </h2>
-        <div className="text-right">
-          <div className="text-sm text-[var(--foreground)]">Total User Trades</div>
-          <div className="font-retro text-3xl text-[var(--primary)]">
-            {userTransactions.length}
+        <div className="flex items-center gap-3 flex-1 ml-8">
+          {/* News Carousel Banner */}
+          <div className="px-8 py-2 overflow-hidden relative flex items-center flex-grow">
+            <div className="overflow-hidden relative w-full flex items-center">
+              <div
+                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast flex items-center gap-2 ${
+                  isEventActive ? 'text-white font-bold' : 'text-gray-700'
+                }`}
+              >
+                {isEventActive && <TbAlertTriangle className="text-4xl" />}
+                <span>{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •</span>
+              </div>
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="text-sm text-[var(--foreground)]">Total User Trades</div>
+            <div className="font-retro text-3xl text-[var(--primary)]">
+              {userTransactions.length}
+            </div>
           </div>
         </div>
       </div>
+
+      <div className="space-y-6">
 
       {/* Tabs */}
       <Card padding="lg">
@@ -366,7 +403,7 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
           </div>
         </Card>
       </div>
-
+      </div>
     </div>
   );
 }

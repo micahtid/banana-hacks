@@ -191,8 +191,6 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   // --- Banana Rot Logic ---
   useEffect(() => {
-    const COOLDOWN_SECONDS = 7.5;
-
     const calculateRot = () => {
       // Get last interaction time and value for current user
       const lastInteractionTime = currentUser.lastInteractionTime || currentUser.lastInteractionT;
@@ -218,8 +216,20 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       const now = new Date();
       const secondsSinceLastTrade = Math.floor((now.getTime() - lastTradeDate.getTime()) / 1000);
 
+      // Use absolute value of lastInteractionValue (current tick when trade happened)
+      const tradeSize = Math.abs(lastInteractionValue) || 50; // Default to 50 if undefined/0
+
+      // Calculate dynamic cooldown based on trade size
+      // Larger trades (higher tick values) = longer cooldown (more protection)
+      // Formula: cooldown = minCooldown + (maxCooldown - minCooldown) * (tradeSize / (tradeSize + scaleFactor))
+      const MIN_COOLDOWN = 1.0;   // Minimum 1 second cooldown
+      const MAX_COOLDOWN = 7.5;   // Maximum 7.5 seconds cooldown
+      const COOLDOWN_SCALE = 100; // Adjust sensitivity (lower = faster growth)
+      
+      const cooldownSeconds = MIN_COOLDOWN + (MAX_COOLDOWN - MIN_COOLDOWN) * (tradeSize / (tradeSize + COOLDOWN_SCALE));
+
       // Apply cooldown period
-      if (secondsSinceLastTrade < COOLDOWN_SECONDS) {
+      if (secondsSinceLastTrade < cooldownSeconds) {
         // Still in cooldown, coins are fresh
         setRotMultiplier(1.0);
         setRotLevel(0);
@@ -227,32 +237,30 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       }
 
       // Calculate time after cooldown (t in the formula)
-      const t = secondsSinceLastTrade - COOLDOWN_SECONDS;
+      const t = secondsSinceLastTrade - cooldownSeconds;
 
-      // Calculate decay coefficient based on lastInteractionValue
+      // Calculate decay coefficient based on trade size
       // Larger trades = slower decay (reward large trades)
-      // Formula: coefficient = minCoeff + (maxCoeff - minCoeff) / (1 + lastInteractionValue/scaleFactor)
-      // This gives a range of ~0.01 (very large trades) to ~0.05 (tiny trades)
-      const minCoeff = 0.01;  // Slowest decay for large trades
-      const maxCoeff = 0.05;  // Fastest decay for tiny trades
-      const scaleFactor = 1000; // Adjust this to tune sensitivity
-
-      // Use absolute value of lastInteractionValue (in case it's negative for sells)
-      // If no trade value, default to a reasonable mid-range coefficient
-      const tradeSize = Math.abs(lastInteractionValue) || 100; // Default to 100 if undefined/0
-      const coefficient = minCoeff + (maxCoeff - minCoeff) / (1 + tradeSize / scaleFactor);
+      // Formula: coefficient = minCoeff + (maxCoeff - minCoeff) / (1 + tradeSize/scaleFactor)
+      const MIN_COEFF = 0.02;  // Slowest decay for large trades
+      const MAX_COEFF = 0.08;  // Fastest decay for tiny trades
+      const DECAY_SCALE = 100; // Adjust this to tune sensitivity
+      
+      const coefficient = MIN_COEFF + (MAX_COEFF - MIN_COEFF) / (1 + tradeSize / DECAY_SCALE);
 
       // Apply exponential decay: e^(-coefficient * t)
       const multiplier = Math.exp(-coefficient * t);
 
       // Debug logging (only log occasionally to avoid spam)
-      if (t % 5 === 0 && t > 0) {
+      if (secondsSinceLastTrade % 5 === 0 && secondsSinceLastTrade > 0) {
         console.log('[Rot Debug]', {
-          t,
-          lastInteractionValue: tradeSize,
+          tradeSize,
+          cooldownSeconds: cooldownSeconds.toFixed(2),
+          secondsSinceLastTrade,
+          timeAfterCooldown: t.toFixed(1),
           coefficient: coefficient.toFixed(4),
           multiplier: multiplier.toFixed(4),
-          secondsSinceLastTrade
+          rotLevel: Math.min(4, Math.floor(t / 5))
         });
       }
 
@@ -511,12 +519,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         <h2 className="font-retro text-4xl text-[var(--primary)]">
           MAIN DASHBOARD
         </h2>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-1 ml-8">
           {/* News Carousel Banner */}
-          <div
-            className="px-8 py-2 overflow-hidden relative flex items-center"
-            style={{ width: '600px' }}
-          >
+          <div className="px-8 py-2 overflow-hidden relative flex items-center flex-grow">
             <div className="overflow-hidden relative w-full flex items-center">
               <div
                 className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast flex items-center gap-2 ${
