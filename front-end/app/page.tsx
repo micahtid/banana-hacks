@@ -54,15 +54,18 @@ export default function Home() {
   };
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-8">
-      <div className="flex w-full max-w-md flex-col gap-6">
+    <div className="flex min-h-screen items-center justify-center p-8 bg-[var(--background)]">
+      <div className="flex w-full max-w-md flex-col gap-8">
         {/* Title */}
         <div className="text-center">
           <h1 className="font-retro text-6xl text-[var(--primary-light)] mb-4">
             BANANA COIN
           </h1>
-          <p className="text-xl text-[var(--foreground)]">
-            Gamified Trading Simulator
+          <p className="text-sm text-[var(--foreground)] max-w-lg mx-auto leading-relaxed">
+            Compete with friends in real-time trading! Create or join game rooms,
+            trade virtual Banana Coins, deploy automated trading bots, and see who
+            can maximize their portfolio value before time runs out. Watch live price
+            movements, execute strategic trades, and climb to the top of the leaderboard!
           </p>
         </div>
 
@@ -123,7 +126,7 @@ export default function Home() {
 
         {/* Join Room Modal */}
         {showJoinForm && user && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center p-8 z-50">
+          <div className="fixed inset-0 bg-[var(--background)] flex items-center justify-center p-8 z-50">
             <div className="w-full max-w-md">
               <Card padding="lg">
                 <div className="flex flex-col gap-4">
@@ -160,7 +163,7 @@ export default function Home() {
                       setUserName("");
                     }}
                     variant="secondary"
-                    size="sm"
+                    size="lg"
                     fullWidth
                   >
                     Cancel

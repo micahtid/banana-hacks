@@ -5,6 +5,7 @@ import { Button } from "@/components/Button";
 import { startRoom, type Game, type User } from "@/utils/database_functions";
 import { useState } from "react";
 import { useUser } from "@/providers/UserProvider";
+import Image from "next/image";
 
 interface WaitingRoomProps {
   game: Game;
@@ -56,14 +57,6 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
           </div>
         </Card>
 
-        {/* Game Info - Duration */}
-        <Card padding="lg">
-          <div className="text-center">
-            <div className="text-[var(--primary)] text-lg mb-1">Duration</div>
-            <div className="font-retro text-2xl">{game.gameDuration} min</div>
-          </div>
-        </Card>
-
         {/* Players List */}
         <Card title={`${game.users.length} / ${game.maxPlayers}`} padding="lg">
           <div className="grid grid-cols-2 gap-3">
@@ -79,10 +72,18 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
                   }
                 `}
               >
-                <div className="font-retro text-lg text-[var(--primary-light)]">
-                  {player.userName}
-                  {player.userId === game.creatorId && " 👑"}
-                  {player.userId === currentUser.userId && " (You)"}
+                <div className="font-retro text-lg text-[var(--primary-light)] flex items-center gap-2">
+                  <span>{player.userName}</span>
+                  {player.userId === game.creatorId && (
+                    <Image
+                      src="/crown.svg"
+                      alt="Creator"
+                      width={16}
+                      height={16}
+                      className="inline-block"
+                    />
+                  )}
+                  {player.userId === currentUser.userId && <span>(You)</span>}
                 </div>
               </div>
             ))}
@@ -99,7 +100,7 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
               fullWidth
               disabled={isStarting}
             >
-              {isStarting ? "Starting..." : "Start"}
+              {isStarting ? "Starting..." : `Start (${game.gameDuration} min)`}
             </Button>
           </Card>
         ) : (
