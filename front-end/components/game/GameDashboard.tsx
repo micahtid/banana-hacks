@@ -65,16 +65,13 @@ function EndGameScreen({ game, currentUser }: GameDashboardProps) {
           </p>
         </div>
 
-        {currentUserEntry && (
+        {currentUserEntry && currentUserRank > 3 && (
           <Card className="mb-6 bg-[var(--card-bg)] border-2 border-[var(--border)]">
             <div className="text-center py-4">
               <div className="font-retro text-3xl text-[var(--primary-dark)] mb-2">
                 YOUR FINAL RANK
               </div>
               <div className="flex items-center justify-center gap-4 mb-4">
-                {currentUserRank === 1 && <FaTrophy className="text-6xl text-yellow-300" />}
-                {currentUserRank === 2 && <FaMedal className="text-6xl text-gray-300" />}
-                {currentUserRank === 3 && <FaAward className="text-6xl text-amber-400" />}
                 <div className="font-retro text-7xl text-[var(--primary-dark)]">
                   #{currentUserRank}
                 </div>
