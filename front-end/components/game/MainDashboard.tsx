@@ -6,9 +6,11 @@ import { Input } from "@/components/Input";
 import {
   type Game,
   type User,
+  type LeaderboardEntry,
   buyCoins,
   sellCoins,
   toggleMinion,
+  getLeaderboard,
 } from "@/utils/database_functions";
 import { useState, useEffect, useMemo } from "react";
 import { useUser } from "@/providers/UserProvider";
@@ -24,6 +26,7 @@ import {
   Legend,
   Filler,
 } from "chart.js";
+import { FaTrophy } from "react-icons/fa";
 
 ChartJS.register(
   CategoryScale,
@@ -63,6 +66,8 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
   const [togglingMinion, setTogglingMinion] = useState<string | null>(null);
+  const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
@@ -121,6 +126,27 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
   }, [game.startTime, game.gameDuration, game.isStarted]);
+
+  // --- Leaderboard Real-time Updates ---
+  useEffect(() => {
+    if (!showLeaderboard || !game.gameId) return;
+
+    const fetchLeaderboard = async () => {
+      try {
+        const data = await getLeaderboard(game.gameId ?? "");
+        setLeaderboard(data);
+      } catch (error) {
+        console.error("Failed to fetch leaderboard:", error);
+      }
+    };
+
+    // Initial fetch
+    fetchLeaderboard();
+
+    // Poll every 1 second for real-time updates
+    const interval = setInterval(fetchLeaderboard, 1000);
+    return () => clearInterval(interval);
+  }, [showLeaderboard, game.gameId]);
 
   // --- Actions ---
   const handleBuy = async () => {
@@ -298,11 +324,20 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         <h2 className="font-retro text-4xl text-[var(--primary)]">
           MAIN DASHBOARD
         </h2>
-        <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
-          <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
-          <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
-            {timeRemaining}
+        <div className="flex items-center gap-3">
+          <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
+            <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
+            <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
+              {timeRemaining}
+            </div>
           </div>
+          <button
+            onClick={() => setShowLeaderboard(true)}
+            className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)] hover:bg-[var(--primary)] hover:border-[var(--primary-dark)] transition-colors cursor-pointer flex items-center justify-center"
+            style={{ aspectRatio: "1/1", height: "100%" }}
+          >
+            <FaTrophy className="text-4xl text-[var(--primary-dark)] hover:text-[var(--background)]" />
+          </button>
         </div>
       </div>
 
@@ -479,6 +514,70 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           </Card>
         </div>
       </div>
+
+      {/* Leaderboard Modal */}
+      {showLeaderboard && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-8"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.2)" }}
+          onClick={() => setShowLeaderboard(false)}
+        >
+          <div
+            className="w-full max-w-xl max-h-[80vh] overflow-y-auto border-2 border-[var(--border)] bg-[var(--card-bg)] p-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-8 pb-4 border-b-2 border-[var(--border)]">
+              <h2 className="font-retro text-4xl text-[var(--primary)]">
+                LEADERBOARD
+              </h2>
+              <button
+                onClick={() => setShowLeaderboard(false)}
+                className="text-3xl text-[var(--primary)] hover:text-[var(--danger)] transition-colors font-retro"
+              >
+                ✕
+              </button>
+            </div>
+
+            {leaderboard.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-[var(--primary)] text-lg">Loading leaderboard...</p>
+              </div>
+            ) : (
+              <div className="space-y-0">
+                {leaderboard.map((entry, index) => {
+                  const isCurrentUser = entry.userId === currentUser.userId;
+                  // Recalculate wealth in real-time using current price
+                  const liveWealth = entry.usdBalance + (entry.coinBalance * currentPrice);
+
+                  return (
+                    <div
+                      key={entry.userId}
+                      className={`py-5 px-4 border-b border-[var(--border)] flex items-center justify-between ${
+                        isCurrentUser ? "bg-[var(--background)]" : ""
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="font-retro text-2xl text-[var(--primary-dark)] min-w-[3rem] text-center">
+                          {index === 0 && "🥇"}
+                          {index === 1 && "🥈"}
+                          {index === 2 && "🥉"}
+                          {index > 2 && `#${index + 1}`}
+                        </div>
+                        <div className="font-retro text-xl text-[var(--primary-dark)]">
+                          {entry.userName}
+                        </div>
+                      </div>
+                      <div className="font-retro text-2xl text-[var(--success)]">
+                        ${liveWealth.toFixed(2)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
