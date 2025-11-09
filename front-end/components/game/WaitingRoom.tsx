@@ -5,6 +5,7 @@ import { Button } from "@/components/Button";
 import { startRoom, type Game, type User } from "@/utils/database_functions";
 import { useState } from "react";
 import { useUser } from "@/providers/UserProvider";
+import Image from "next/image";
 
 interface WaitingRoomProps {
   game: Game;
@@ -46,21 +47,13 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
           <p className="text-[var(--foreground)] mb-3 text-center">
             Share this Game ID with other players:
           </p>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 p-3 bg-[var(--background)] border-2 border-[var(--border)] font-mono text-[var(--primary)] text-center">
+          <div className="flex items-stretch gap-3">
+            <div className="flex-1 p-3 bg-[var(--background)] border-2 border-[var(--border)] font-mono text-[var(--primary)] text-center flex items-center justify-center">
               {game.gameId}
             </div>
-            <Button onClick={copyGameId} variant="primary">
+            <Button onClick={copyGameId} variant="primary" className="px-6">
               Copy
             </Button>
-          </div>
-        </Card>
-
-        {/* Game Info - Duration */}
-        <Card padding="lg">
-          <div className="text-center">
-            <div className="text-[var(--primary)] text-lg mb-1">Duration</div>
-            <div className="font-retro text-2xl">{game.gameDuration} min</div>
           </div>
         </Card>
 
@@ -79,10 +72,18 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
                   }
                 `}
               >
-                <div className="font-retro text-lg text-[var(--primary-light)]">
-                  {player.userName}
-                  {player.userId === game.creatorId && " 👑"}
-                  {player.userId === currentUser.userId && " (You)"}
+                <div className="font-retro text-lg text-[var(--primary-light)] flex items-center gap-2">
+                  <span>{player.userName}</span>
+                  {player.userId === game.creatorId && (
+                    <Image
+                      src="/crown.svg"
+                      alt="Creator"
+                      width={16}
+                      height={16}
+                      className="inline-block"
+                    />
+                  )}
+                  {player.userId === currentUser.userId && <span>(You)</span>}
                 </div>
               </div>
             ))}
@@ -99,7 +100,7 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
               fullWidth
               disabled={isStarting}
             >
-              {isStarting ? "Starting..." : "Start"}
+              {isStarting ? "Starting..." : `Start (${game.gameDuration} min)`}
             </Button>
           </Card>
         ) : (
