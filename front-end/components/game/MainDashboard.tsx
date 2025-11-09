@@ -42,7 +42,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
 
-  const currentPrice = Number(game.coin.at(-1) ?? 100);
+  const currentPrice = Number(game.coin.at(-1) ?? 1.0);
+  const previousPrice = game.coin.length > 1 ? Number(game.coin.at(-2) ?? 1.0) : currentPrice;
+  const priceChange = currentPrice - previousPrice;
+  const priceChangePercent = previousPrice !== 0 ? ((priceChange / previousPrice) * 100) : 0;
 
   useEffect(() => {
     if (!game.startTime || !game.isStarted) {
@@ -121,8 +124,17 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const bots = Array.isArray(currentUser.bots) ? currentUser.bots : [];
 
   // Prepare chart data
+  // Convert index (seconds) to time format for display
+  const formatTimeLabel = (seconds: number) => {
+    if (seconds === 0) return '0s';
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return secs === 0 ? `${minutes}m` : `${minutes}m${secs}s`;
+  };
+
   const chartData = {
-    labels: game.coin.map((_, index) => `${index}m`),
+    labels: game.coin.map((_, index) => formatTimeLabel(index)),
     datasets: [
       {
         label: "Banana Coin Price",
@@ -136,6 +148,14 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       },
     ],
   };
+
+  // Calculate price range for consistent grid
+  const prices = game.coin.filter(p => p > 0);
+  const minPrice = prices.length > 0 ? Math.min(...prices) : 0.5;
+  const maxPrice = prices.length > 0 ? Math.max(...prices) : 1.5;
+  const priceRange = maxPrice - minPrice;
+  const yAxisMin = Math.max(0, minPrice - priceRange * 0.1); // 10% padding below
+  const yAxisMax = maxPrice + priceRange * 0.1; // 10% padding above
 
   const chartOptions = {
     responsive: true,
@@ -158,6 +178,14 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           family: "var(--font-geist-sans), sans-serif",
           size: 14,
         },
+        callbacks: {
+          title: function(context: any) {
+            return `Time: ${context[0].label}`;
+          },
+          label: function(context: any) {
+            return `Price: $${context.parsed.y.toFixed(4)}`;
+          },
+        },
       },
     },
     scales: {
@@ -170,9 +198,13 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           font: {
             family: "var(--font-geist-mono), monospace",
           },
+          maxTicksLimit: 10, // Limit number of x-axis labels for clarity
+          autoSkip: true,
         },
       },
       y: {
+        min: yAxisMin,
+        max: yAxisMax,
         grid: {
           color: "rgba(74, 60, 31, 0.3)",
         },
@@ -182,8 +214,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
             family: "var(--font-geist-mono), monospace",
           },
           callback: function(value: any) {
-            return '$' + value;
+            return '$' + Number(value).toFixed(3);
           },
+          stepSize: priceRange / 5, // Consistent 5 grid lines
         },
       },
     },
@@ -221,13 +254,16 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 <div>
                   <div className="text-sm text-[var(--foreground)]">Current Price</div>
                   <div className="font-retro text-3xl text-[var(--primary)]">
-                    ${currentPrice.toFixed(2)}
+                    ${currentPrice.toFixed(4)}
+                  </div>
+                  <div className={`text-sm ${priceChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
+                    {priceChange >= 0 ? '▲' : '▼'} {Math.abs(priceChange).toFixed(4)} ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-sm text-[var(--foreground)]">Total Volume</div>
                   <div className="font-retro text-2xl text-[var(--accent)]">
-                    {game.interactions.length} trades
+                    {game.interactions || 0} trades
                   </div>
                 </div>
               </div>
@@ -269,7 +305,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 step="0.01"
               />
               <div className="text-xs text-[var(--foreground)] -mt-2">
-                Cost: ${(parseFloat(amount || "0") * currentPrice).toFixed(2)} USD
+                Cost: ${(parseFloat(amount || "0") * currentPrice).toFixed(4)} USD (@ ${currentPrice.toFixed(4)}/BC)
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Button

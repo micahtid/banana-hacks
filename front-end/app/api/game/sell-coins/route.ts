@@ -25,7 +25,24 @@ export async function POST(request: NextRequest) {
 
     const gameData = await redis.hgetall(`game:${gameId}`);
     const players = JSON.parse(gameData.players || '[]');
-    const coinPrice = parseFloat(gameData.coinPrice || '100');
+    
+    // ✨ NEW: Get dynamic price from FastAPI if available
+    let coinPrice = parseFloat(gameData.coinPrice || '100');
+    try {
+      const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
+      const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`);
+      
+      if (marketResponse.ok) {
+        const marketData = await marketResponse.json();
+        coinPrice = marketData.currentPrice;
+        console.log(`Using dynamic price: $${coinPrice.toFixed(2)}`);
+      } else {
+        console.log(`Using static price: $${coinPrice.toFixed(2)} (market data not available)`);
+      }
+    } catch (error) {
+      console.log(`Using static price: $${coinPrice.toFixed(2)} (FastAPI not reachable)`);
+      // Continue with static price if FastAPI is not available
+    }
 
     const playerIndex = players.findIndex((p: any) => p.userId === userId);
     if (playerIndex === -1) {
@@ -48,9 +65,19 @@ export async function POST(request: NextRequest) {
     player.coins -= amount;
     player.usd += totalRevenue;
 
+    // Update players
     await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));
+    
+    // Track the interaction (increment trade counter)
+    const currentInteractions = parseInt(gameData.interactions || '0');
+    await redis.hset(`game:${gameId}`, 'interactions', (currentInteractions + 1).toString());
 
-    return NextResponse.json({ success: true, player });
+    return NextResponse.json({ 
+      success: true, 
+      player,
+      coinPrice,  // Include price used for transparency
+      totalRevenue 
+    });
   } catch (error) {
     console.error('Error selling coins:', error);
     return NextResponse.json(

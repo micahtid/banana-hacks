@@ -110,12 +110,37 @@ class Market:
             self.users.remove(userID)
             self.save_to_redis()
     
-    def updateMarket(self):
+    def updateMarket(self, num_simulated_trades=20):
         """Update the market state (price, tick, volatility)"""
         # Increment tick
         self.current_tick += 1
         
-        # Calculate new price with dollar supply and bc supply
+        # Simulate market activity with random trades to change supplies
+        # This creates realistic price movement with higher volatility
+        for _ in range(num_simulated_trades):
+            current_price = self.dollar_supply / self.bc_supply if self.bc_supply > 0 else 1.0
+            
+            # Much larger, variable trade sizes for more volatility
+            # Trade between 0.5% to 2% of current BC supply
+            min_trade = self.bc_supply * 0.005  # 0.5%
+            max_trade = self.bc_supply * 0.02   # 2%
+            trade_size = random.uniform(min_trade, max_trade)
+            
+            # Random buy or sell (50/50 chance)
+            if random.random() > 0.5:
+                # Simulated buy: BC leaves market, USD enters market
+                self.bc_supply -= trade_size
+                self.dollar_supply += current_price * trade_size
+            else:
+                # Simulated sell: BC enters market, USD leaves market
+                self.bc_supply += trade_size
+                self.dollar_supply -= current_price * trade_size
+            
+            # Ensure supplies don't go negative or too low
+            self.bc_supply = max(1000, self.bc_supply)
+            self.dollar_supply = max(1000, self.dollar_supply)
+        
+        # Calculate new price with updated supplies
         new_price = self.dollar_supply / self.bc_supply
         new_price = max(0.01, new_price)  # Ensure price doesn't go below 0.01
         
@@ -125,6 +150,8 @@ class Market:
         # Update market data
         self.market_data.current_price = new_price
         self.market_data.current_tick = self.current_tick
+        self.market_data.dollar_supply = self.dollar_supply
+        self.market_data.bc_supply = self.bc_supply
         
         # Calculate volatility from recent returns
         returns = self.market_data.returns(window=10)
