@@ -1,3 +1,10 @@
+/**
+ * Home Page (Landing Page)
+ * 
+ * Entry point for the application
+ * Handles authentication and game room creation/joining
+ */
+
 "use client";
 
 import { useUser } from "@/providers/UserProvider";
@@ -8,15 +15,31 @@ import { Card } from "@/components/Card";
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 
+/* ============================================
+   COMPONENT
+   ============================================ */
+
 export default function Home() {
+  /* ============================================
+     STATE & HOOKS
+     ============================================ */
+  
   const { user } = useUser();
   const router = useRouter();
+  
+  // Form state
   const [gameId, setGameId] = useState("");
   const [userName, setUserName] = useState("");
   const [error, setError] = useState("");
   const [isJoining, setIsJoining] = useState(false);
+  
+  // UI state
   const [showCreateForm, setShowCreateForm] = useState(false);
   const [showJoinForm, setShowJoinForm] = useState(false);
+
+  /* ============================================
+     EVENT HANDLERS
+     ============================================ */
 
   const handleCreateRoom = () => {
     if (!user) {
@@ -53,10 +76,14 @@ export default function Home() {
     }
   };
 
+  /* ============================================
+     RENDER
+     ============================================ */
+
   return (
     <div className="flex min-h-screen items-center justify-center p-8 bg-[var(--background)]">
       <div className="flex w-full max-w-md flex-col gap-8">
-        {/* Title */}
+        {/* ========== Title Section ========== */}
         <div className="text-center">
           <h1 className="font-retro text-6xl text-[var(--primary-light)] mb-4">
             BANANA COIN
@@ -69,7 +96,7 @@ export default function Home() {
           </p>
         </div>
 
-        {/* Auth Status and Actions */}
+        {/* ========== Authentication Status ========== */}
         {user === undefined ? (
           <Card className="text-center">
             <p className="text-lg">Checking authentication...</p>
@@ -83,7 +110,7 @@ export default function Home() {
           </Card>
         ) : (
           <>
-            {/* Main Actions */}
+            {/* ========== Authenticated: Main Actions ========== */}
             <Card padding="lg">
               <div className="flex flex-col gap-4">
                 <Button
@@ -108,7 +135,7 @@ export default function Home() {
               </div>
             </Card>
 
-            {/* Logout */}
+            {/* ========== Logout Button ========== */}
             <Card className="text-center">
               <Button onClick={signOut} variant="secondary" fullWidth>
                 Logout
@@ -117,14 +144,14 @@ export default function Home() {
           </>
         )}
 
-        {/* Error Message */}
+        {/* ========== Error Display ========== */}
         {error && (
           <Card className="border-[var(--danger)]">
             <p className="text-[var(--danger)] text-center">{error}</p>
           </Card>
         )}
 
-        {/* Join Room Modal */}
+        {/* ========== Join Room Modal ========== */}
         {showJoinForm && user && (
           <div className="fixed inset-0 bg-[var(--background)] flex items-center justify-center p-8 z-50">
             <div className="w-full max-w-md">
