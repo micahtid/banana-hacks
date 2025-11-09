@@ -72,20 +72,15 @@ export default function Shops({ game, currentUser }: ShopsProps) {
 
   // Event News Banner Logic
   useEffect(() => {
-    // Clear any existing timer
-    if (eventTimerRef.current) {
-      clearTimeout(eventTimerRef.current);
-      eventTimerRef.current = null;
-    }
-
-    // Reset previousEventTriggered when eventTriggered becomes false
-    if (!game.eventTriggered && previousEventTriggered) {
-      setPreviousEventTriggered(false);
-      setNewsText("NO NEWS");
-      setIsEventActive(false);
-    }
-    
+    // If event just triggered (new event), start the timer
     if (game.eventTriggered && !previousEventTriggered) {
+      // Clear any existing timer
+      if (eventTimerRef.current) {
+        clearTimeout(eventTimerRef.current);
+        eventTimerRef.current = null;
+      }
+
+      // Event just triggered!
       setPreviousEventTriggered(true);
       const newText = game.eventTitle || "MARKET EVENT";
       setNewsText(newText);
@@ -95,8 +90,17 @@ export default function Shops({ game, currentUser }: ShopsProps) {
       eventTimerRef.current = setTimeout(() => {
         setNewsText("NO NEWS");
         setIsEventActive(false);
-        eventTimerRef.current = null;
+        setPreviousEventTriggered(false); // Reset for next event
       }, 30000);
+    }
+
+    // If event was cleared from backend before timer expired, reset immediately
+    if (!game.eventTriggered && previousEventTriggered && eventTimerRef.current) {
+      clearTimeout(eventTimerRef.current);
+      eventTimerRef.current = null;
+      setPreviousEventTriggered(false);
+      setNewsText("NO NEWS");
+      setIsEventActive(false);
     }
 
     // Cleanup on unmount
@@ -238,12 +242,12 @@ export default function Shops({ game, currentUser }: ShopsProps) {
   return (
     <div>
       {/* Header with News Flash */}
-      <div className="flex items-center gap-6 mb-6">
+      <div className="flex items-center gap-6 mt-4 mb-10">
         <h2 className="font-retro text-4xl text-[var(--primary)] flex-shrink-0">
           MINION SHOP
         </h2>
         {/* News Carousel Banner - stretches between page name and balance */}
-        <div className={`py-2 px-4 overflow-hidden relative flex items-center flex-1 min-w-0 ${isEventActive ? 'border-2 border-[var(--danger)] animate-flash-red rounded' : ''}`}>
+        <div className={`py-2 px-8 overflow-hidden relative flex items-center flex-1 min-w-0 ${isEventActive ? 'border-2 border-[var(--danger)] animate-flash-red rounded' : ''}`}>
           <div className="overflow-hidden relative w-full flex items-center">
             <div
               className="font-retro text-3xl whitespace-nowrap animate-scroll-fast inline-flex items-center gap-2 text-gray-700"
@@ -277,7 +281,7 @@ export default function Shops({ game, currentUser }: ShopsProps) {
           {/* Custom Minion Card */}
           <div
             className={`
-              p-5 border-2 transition-all
+              p-8 border-2 transition-all
               ${currentUser.usd >= CUSTOM_MINION_PRICE ? "border-[var(--border)] hover:border-[var(--primary)]" : "border-[var(--border)] opacity-60"}
               bg-[var(--background)]
             `}
@@ -344,7 +348,7 @@ export default function Shops({ game, currentUser }: ShopsProps) {
               <div
                 key={minion.id}
                 className={`
-                  p-5 border-2 transition-all
+                  p-8 border-2 transition-all
                   ${canAfford ? "border-[var(--border)] hover:border-[var(--primary)]" : "border-[var(--border)] opacity-60"}
                   ${isOwned ? "bg-[var(--border)]" : "bg-[var(--background)]"}
                 `}

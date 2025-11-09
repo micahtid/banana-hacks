@@ -65,6 +65,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const { user } = useUser();
   const [amount, setAmount] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
+  const [actionError, setActionError] = useState<string>("");
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
   const [togglingMinion, setTogglingMinion] = useState<string | null>(null);
   const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
@@ -84,20 +85,14 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   // --- Event News Banner Logic ---
   useEffect(() => {
-    // Clear any existing timer
-    if (eventTimerRef.current) {
-      clearTimeout(eventTimerRef.current);
-      eventTimerRef.current = null;
-    }
-
-    // Reset previousEventTriggered when eventTriggered becomes false
-    if (!game.eventTriggered && previousEventTriggered) {
-      setPreviousEventTriggered(false);
-      setNewsText("NO NEWS");
-      setIsEventActive(false);
-    }
-    
+    // If event just triggered (new event), start the timer
     if (game.eventTriggered && !previousEventTriggered) {
+      // Clear any existing timer
+      if (eventTimerRef.current) {
+        clearTimeout(eventTimerRef.current);
+        eventTimerRef.current = null;
+      }
+
       // Event just triggered!
       setPreviousEventTriggered(true);
       const newText = game.eventTitle || "MARKET EVENT";
@@ -108,8 +103,17 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       eventTimerRef.current = setTimeout(() => {
         setNewsText("NO NEWS");
         setIsEventActive(false);
-        eventTimerRef.current = null;
+        setPreviousEventTriggered(false); // Reset for next event
       }, 30000);
+    }
+
+    // If event was cleared from backend before timer expired, reset immediately
+    if (!game.eventTriggered && previousEventTriggered && eventTimerRef.current) {
+      clearTimeout(eventTimerRef.current);
+      eventTimerRef.current = null;
+      setPreviousEventTriggered(false);
+      setNewsText("NO NEWS");
+      setIsEventActive(false);
     }
 
     // Cleanup on unmount
@@ -316,10 +320,13 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const handleBuy = async () => {
     if (!user || !amount || parseFloat(amount) <= 0) return;
     setActionLoading("buy");
+    setActionError("");
     try {
       await buyCoins(user.uid, parseFloat(amount), game.gameId ?? "");
       setAmount("");
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to buy coins";
+      setActionError(errorMessage);
       console.error("Failed to buy coins:", error);
     } finally {
       setActionLoading(null);
@@ -329,10 +336,13 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const handleSell = async () => {
     if (!user || !amount || parseFloat(amount) <= 0) return;
     setActionLoading("sell");
+    setActionError("");
     try {
       await sellCoins(user.uid, parseFloat(amount), game.gameId ?? "");
       setAmount("");
     } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Failed to sell coins";
+      setActionError(errorMessage);
       console.error("Failed to sell coins:", error);
     } finally {
       setActionLoading(null);
@@ -554,7 +564,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           MAIN DASHBOARD
         </h2>
         {/* News Carousel Banner - stretches between page name and clock */}
-        <div className={`py-2 px-4 overflow-hidden relative flex items-center flex-1 min-w-0 ${isEventActive ? 'border-2 border-[var(--danger)] animate-flash-red rounded' : ''}`}>
+        <div className={`py-2 px-8 overflow-hidden relative flex items-center flex-1 min-w-0 ${isEventActive ? 'border-2 border-[var(--danger)] animate-flash-red rounded' : ''}`}>
           <div className="overflow-hidden relative w-full flex items-center">
             <div
               className="font-retro text-3xl whitespace-nowrap animate-scroll-fast inline-flex items-center gap-2 text-gray-700"
@@ -648,7 +658,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 type="number"
                 placeholder="0.00"
                 value={amount}
-                onChange={(e) => setAmount(e.target.value)}
+                onChange={(e) => {
+                  setAmount(e.target.value);
+                  setActionError(""); // Clear error when user types
+                }}
                 fullWidth
                 min="0"
                 step="0.01"
@@ -658,6 +671,11 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 {(parseFloat(amount || "0") * currentPrice).toFixed(4)} USD (@ $
                 {currentPrice.toFixed(4)}/BC)
               </div>
+              {actionError && (
+                <div className="text-sm text-[var(--danger)] bg-red-50 border border-[var(--danger)] p-2 rounded">
+                  {actionError}
+                </div>
+              )}
               <div className="grid grid-cols-2 gap-3">
                 <Button
                   onClick={handleBuy}
@@ -716,7 +734,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   return (
                     <div
                       key={minionId || Math.random()}
-                      className={`p-3 border-2 transition-colors ${
+                      className={`p-8 border-2 transition-colors ${
                         isActive
                           ? 'border-[var(--success)] bg-[var(--background)]'
                           : 'border-[var(--border)] bg-[var(--background)] opacity-70'

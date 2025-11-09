@@ -25,23 +25,65 @@ export default function GamePage() {
   useEffect(() => {
     if (!gameId) return;
 
-    const unsubscribe = getRoom(gameId, (gameData) => {
-      if (gameData) {
-        // Detect when game transitions from not started to started
-        if (!wasStarted && gameData.isStarted) {
-          setWasStarted(true);
-          setShowCountdown(true);
-          setCountdownNumber(3);
-        }
-        setGame(gameData);
-        setError("");
-      } else {
-        setError("Game not found");
-      }
-      setLoading(false);
-    });
+    let unsubscribe: (() => void) | null = null;
 
-    return () => unsubscribe();
+    const startPolling = () => {
+      unsubscribe = getRoom(gameId, (gameData) => {
+        if (gameData) {
+          // Detect when game transitions from not started to started
+          if (!wasStarted && gameData.isStarted) {
+            setWasStarted(true);
+            setShowCountdown(true);
+            setCountdownNumber(3);
+          }
+
+          // Check if game has ended
+          if (gameData.startTime && gameData.isStarted) {
+            const now = new Date();
+            let startTime: Date;
+
+            if (
+              typeof gameData.startTime === "object" &&
+              gameData.startTime !== null &&
+              "seconds" in gameData.startTime &&
+              typeof (gameData.startTime as any).seconds === "number"
+            ) {
+              startTime = new Date((gameData.startTime as { seconds: number }).seconds * 1000);
+            } else if (gameData.startTime instanceof Date) {
+              startTime = gameData.startTime;
+            } else {
+              startTime = new Date(gameData.startTime as any);
+            }
+
+            const durationMinutes = typeof gameData.gameDuration === "number" ? gameData.gameDuration : gameData.durationMinutes || 0;
+            const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
+            const diff = endTime.getTime() - now.getTime();
+
+            // If game has ended, stop polling
+            if (diff <= 0) {
+              if (unsubscribe) {
+                unsubscribe();
+                unsubscribe = null;
+              }
+            }
+          }
+
+          setGame(gameData);
+          setError("");
+        } else {
+          setError("Game not found");
+        }
+        setLoading(false);
+      });
+    };
+
+    startPolling();
+
+    return () => {
+      if (unsubscribe) {
+        unsubscribe();
+      }
+    };
   }, [gameId, wasStarted]);
 
   // Countdown effect
