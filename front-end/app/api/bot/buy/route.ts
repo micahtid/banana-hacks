@@ -5,9 +5,9 @@ const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://localhost:8000';
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { gameId, userId, botType, cost, customPrompt } = body;
+    const { gameId, userId, botType, cost, customPrompt, botName } = body;
 
-    console.log('[Bot Buy] Request received:', { gameId, userId, botType, cost });
+    console.log('[Bot Buy] Request received:', { gameId, userId, botType, cost, botName });
 
     if (!gameId || !userId || !botType || cost === undefined) {
       return NextResponse.json(
@@ -32,6 +32,7 @@ export async function POST(request: NextRequest) {
           botType,
           cost,
           customPrompt,
+          botName,
         }),
       });
     } catch (fetchError) {

@@ -1,12 +1,15 @@
 "use client";
 
-import { type Game, type User } from "@/utils/database_functions";
+import { type Game, type User, type LeaderboardEntry, getLeaderboard } from "@/utils/database_functions";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import MainDashboard from "./MainDashboard";
 import Shops from "./Shops";
 import Transactions from "./Transactions";
 import { TbChartLine, TbShoppingBag, TbList, TbDoorExit } from "react-icons/tb";
+import { FaTrophy, FaMedal, FaAward } from "react-icons/fa";
+import { Card } from "@/components/Card";
+import { Button } from "@/components/Button";
 
 interface GameDashboardProps {
   game: Game;
@@ -15,12 +18,207 @@ interface GameDashboardProps {
 
 type Tab = "dashboard" | "shops" | "transactions";
 
+// End Game Screen Component
+function EndGameScreen({ game, currentUser }: GameDashboardProps) {
+  const router = useRouter();
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const calculateFinalLeaderboard = async () => {
+      try {
+        const data = await getLeaderboard(game.gameId ?? "");
+        setLeaderboard(data || []);
+      } catch (error) {
+        console.error('Failed to fetch final leaderboard:', error);
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    calculateFinalLeaderboard();
+  }, [game.gameId]);
+
+  const handleReturnHome = () => {
+    router.push("/");
+  };
+
+  const currentUserRank = leaderboard.findIndex(entry => entry.userId === currentUser.userId) + 1;
+  const currentUserEntry = leaderboard.find(entry => entry.userId === currentUser.userId);
+
+  const playersList = game.players || game.users || [];
+  const totalPlayers = playersList.length;
+  const finalPrice = game.coinHistory && game.coinHistory.length > 0 
+    ? game.coinHistory[game.coinHistory.length - 1] 
+    : 1.0;
+  const totalTrades = Array.isArray(game.interactions) ? game.interactions.length : 0;
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-8 bg-[var(--background)]">
+      <div className="w-full max-w-4xl">
+        <div className="text-center mb-8">
+          <h1 className="font-retro text-6xl text-[var(--primary)] mb-4">
+            GAME OVER!
+          </h1>
+          <p className="font-retro text-2xl text-[var(--primary-dark)]">
+            Time's up! Here's how everyone did.
+          </p>
+        </div>
+
+        {currentUserEntry && (
+          <Card className="mb-6 bg-[var(--primary-light)] border-2 border-[var(--primary)]">
+            <div className="text-center py-4">
+              <div className="font-retro text-3xl text-[var(--primary-dark)] mb-2">
+                YOUR FINAL RANK
+              </div>
+              <div className="flex items-center justify-center gap-4 mb-4">
+                {currentUserRank === 1 && <FaTrophy className="text-6xl text-yellow-400" />}
+                {currentUserRank === 2 && <FaMedal className="text-6xl text-gray-400" />}
+                {currentUserRank === 3 && <FaAward className="text-6xl text-amber-600" />}
+                <div className="font-retro text-7xl text-[var(--primary-dark)]">
+                  #{currentUserRank}
+                </div>
+              </div>
+              <div className="font-retro text-4xl text-[var(--success)] mb-2">
+                ${currentUserEntry.wealth.toFixed(2)}
+              </div>
+              <div className="text-lg text-[var(--primary-dark)]">
+                ${currentUserEntry.usdBalance.toFixed(2)} USD + {currentUserEntry.coinBalance.toFixed(2)} BC
+              </div>
+            </div>
+          </Card>
+        )}
+
+        <Card title="FINAL LEADERBOARD - TOP 3" padding="lg" className="mb-6">
+          {loading ? (
+            <div className="text-center py-12">
+              <p className="text-[var(--primary)] text-lg">Loading final results...</p>
+            </div>
+          ) : leaderboard.length === 0 ? (
+            <div className="text-center py-12">
+              <p className="text-[var(--primary)] text-lg">No players found</p>
+            </div>
+          ) : (
+            <div className="space-y-0">
+              {leaderboard.slice(0, 3).map((entry, index) => {
+                const isCurrentUser = entry.userId === currentUser.userId;
+
+                return (
+                  <div
+                    key={entry.userId}
+                    className={`py-5 px-4 border-b border-[var(--border)] flex items-center justify-between ${
+                      isCurrentUser ? "bg-[var(--primary-light)]" : ""
+                    }`}
+                  >
+                    <div className="flex items-center gap-4">
+                      <div className="min-w-[3rem] flex items-center justify-center">
+                        {index === 0 && <FaTrophy className="text-3xl text-yellow-400" />}
+                        {index === 1 && <FaMedal className="text-3xl text-gray-400" />}
+                        {index === 2 && <FaAward className="text-3xl text-amber-600" />}
+                      </div>
+                      <div>
+                        <div className="font-retro text-xl text-[var(--primary-dark)]">
+                          {entry.userName}
+                          {isCurrentUser && " (You)"}
+                        </div>
+                        <div className="text-sm text-[var(--primary)]">
+                          ${entry.usdBalance.toFixed(2)} + {entry.coinBalance.toFixed(2)} BC
+                        </div>
+                      </div>
+                    </div>
+                    <div className="font-retro text-2xl text-[var(--success)]">
+                      ${entry.wealth.toFixed(2)}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </Card>
+
+        <div className="grid grid-cols-3 gap-4 mb-6">
+          <Card padding="lg">
+            <div className="text-center">
+              <div className="text-sm text-[var(--primary)] mb-2">TOTAL PLAYERS</div>
+              <div className="font-retro text-4xl text-[var(--primary-dark)]">
+                {totalPlayers}
+              </div>
+            </div>
+          </Card>
+          <Card padding="lg">
+            <div className="text-center">
+              <div className="text-sm text-[var(--primary)] mb-2">FINAL PRICE</div>
+              <div className="font-retro text-4xl text-[var(--primary-dark)]">
+                ${finalPrice.toFixed(4)}
+              </div>
+            </div>
+          </Card>
+          <Card padding="lg">
+            <div className="text-center">
+              <div className="text-sm text-[var(--primary)] mb-2">TOTAL TRADES</div>
+              <div className="font-retro text-4xl text-[var(--primary-dark)]">
+                {totalTrades}
+              </div>
+            </div>
+          </Card>
+        </div>
+
+        <div className="text-left">
+          <Button
+            onClick={handleReturnHome}
+            variant="primary"
+            size="lg"
+            className="px-12 py-4 text-2xl"
+          >
+            RETURN TO LOBBY
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function GameDashboard({
   game,
   currentUser,
 }: GameDashboardProps) {
   const [activeTab, setActiveTab] = useState<Tab>("dashboard");
   const router = useRouter();
+  const [isGameEnded, setIsGameEnded] = useState(false);
+
+  // Check if game has ended
+  useEffect(() => {
+    if (!game.startTime || !game.isStarted) return;
+
+    const checkGameEnd = () => {
+      const now = new Date();
+      let startTime: Date;
+
+      if (
+        typeof game.startTime === "object" &&
+        "seconds" in game.startTime &&
+        typeof (game.startTime as any).seconds === "number"
+      ) {
+        startTime = new Date((game.startTime as { seconds: number }).seconds * 1000);
+      } else if (game.startTime instanceof Date) {
+        startTime = game.startTime;
+      } else {
+        startTime = new Date(game.startTime as string);
+      }
+
+      const durationMinutes = typeof game.gameDuration === "number" ? game.gameDuration : game.durationMinutes || 0;
+      const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
+      const diff = endTime.getTime() - now.getTime();
+
+      if (diff <= 0) {
+        setIsGameEnded(true);
+      }
+    };
+
+    checkGameEnd();
+    const interval = setInterval(checkGameEnd, 1000);
+    return () => clearInterval(interval);
+  }, [game.startTime, game.gameDuration, game.durationMinutes, game.isStarted]);
 
   const tabs = [
     { id: "dashboard" as Tab, icon: TbChartLine },
@@ -31,6 +229,11 @@ export default function GameDashboard({
   const handleLeaveGame = () => {
     router.push("/");
   };
+
+  // Show end game screen if game has ended
+  if (isGameEnded) {
+    return <EndGameScreen game={game} currentUser={currentUser} />;
+  }
 
   return (
     <div className="flex h-screen">

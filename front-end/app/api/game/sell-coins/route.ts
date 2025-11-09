@@ -13,6 +13,13 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    if (amount <= 0) {
+      return NextResponse.json(
+        { error: 'Amount must be positive' },
+        { status: 400 }
+      );
+    }
+
     const redis = getRedisClient();
     const gameExists = await redis.exists(`game:${gameId}`);
 
@@ -90,6 +97,7 @@ export async function POST(request: NextRequest) {
       name: playerName,  // Required for front-end
       type: 'sell',      // Required for front-end
       value: Math.round(amount * 100),  // Amount in cents
+      timestamp: new Date().toISOString(),  // Add timestamp
       interactionName: playerName,
       interactionDescription: `${playerName} sold ${amount} BC for $${totalRevenue.toFixed(2)}`
     });

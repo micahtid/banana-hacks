@@ -126,6 +126,8 @@ export async function GET(
     let priceHistory: number[] = [];
     let volatility = 0;
     let marketActive = false;
+    let eventTitle = '';
+    let eventTriggered = false;
     
     try {
       // First, try to read market data directly from Redis (faster and more reliable)
@@ -140,6 +142,17 @@ export async function GET(
           priceHistory = JSON.parse(marketData.price_history || '[]');
           volatility = parseFloat(marketData.volatility || '0');
           marketActive = true;
+        }
+      }
+      
+      // Fetch event data from market basic info
+      const marketKey = `market:${gameId}`;
+      const marketKeyExists = await redis.exists(marketKey);
+      if (marketKeyExists) {
+        const marketInfo = await redis.hgetall(marketKey);
+        if (marketInfo) {
+          eventTitle = marketInfo.event_title || '';
+          eventTriggered = marketInfo.event_triggered === 'True' || marketInfo.event_triggered === 'true';
         }
       }
       
@@ -165,6 +178,8 @@ export async function GET(
           currentPrice = marketData.currentPrice;
           priceHistory = marketData.priceHistory || [];
           volatility = marketData.volatility || 0;
+          eventTitle = marketData.eventTitle || '';
+          eventTriggered = marketData.eventTriggered || false;
           marketActive = true;
         }
       }
@@ -204,7 +219,9 @@ export async function GET(
       currentPrice,
       volatility,
       marketActive,
-      priceHistoryLength: priceHistory.length
+      priceHistoryLength: priceHistory.length,
+      eventTitle,
+      eventTriggered
     };
 
     const response = NextResponse.json({ game: parsedData, success: true });

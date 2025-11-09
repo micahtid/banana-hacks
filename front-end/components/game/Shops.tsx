@@ -6,6 +6,7 @@ import { Input } from "@/components/Input";
 import { type Game, type User, buyMinion } from "@/utils/database_functions";
 import { useState, useEffect } from "react";
 import { useUser } from "@/providers/UserProvider";
+import { TbAlertTriangle } from "react-icons/tb";
 
 interface ShopsProps {
   game: Game;
@@ -22,46 +23,39 @@ interface PremadeMinion {
 
 const PREMADE_MINIONS: PremadeMinion[] = [
   {
-    id: "hodler",
-    name: "Mean Reversion Bot",
-    description: "A patient minion that buys and holds for long-term gains",
-    price: 500,
-    strategy: "Buy low, hold forever",
-  },
-  {
-    id: "scalper",
-    name: "Momentum Bot",
-    description: "Makes rapid small trades to capture quick profits",
-    price: 750,
-    strategy: "Fast trades, small margins",
-  },
-  {
-    id: "swing",
-    name: "Momentum Bot",
-    description: "Identifies trends and trades on momentum swings",
-    price: 1000,
-    strategy: "Trend following",
-  },
-  {
-    id: "arbitrage",
-    name: "Market Maker Bot",
-    description: "Exploits price differences for guaranteed profits",
-    price: 1500,
-    strategy: "Risk-free arbitrage",
-  },
-  {
-    id: "dip",
-    name: "Mean Reversion Bot",
-    description: "Automatically buys during market dips",
-    price: 600,
-    strategy: "Buy the dip",
+    id: "random",
+    name: "Random Bot",
+    description: "Makes random trades with varied probability and amounts",
+    price: 300,
+    strategy: "Random buy/sell decisions",
   },
   {
     id: "momentum",
     name: "Momentum Bot",
-    description: "Rides strong upward momentum for maximum gains",
+    description: "Follows market trends using moving averages to ride momentum",
     price: 800,
-    strategy: "Follow the momentum",
+    strategy: "Buy on uptrends, sell on downtrends",
+  },
+  {
+    id: "mean_reversion",
+    name: "Mean Reversion Bot",
+    description: "Buys when price is below average, sells when above average",
+    price: 750,
+    strategy: "Trade against extreme price movements",
+  },
+  {
+    id: "market_maker",
+    name: "Market Maker Bot",
+    description: "Maintains balanced portfolio by rebalancing USD/BC ratio",
+    price: 1200,
+    strategy: "Keep 50/50 USD/BC balance",
+  },
+  {
+    id: "hedger",
+    name: "Hedger Bot",
+    description: "Protects against volatility by hedging during market swings",
+    price: 1000,
+    strategy: "Reduce risk in volatile markets",
   },
 ];
 
@@ -71,6 +65,25 @@ export default function Shops({ game, currentUser }: ShopsProps) {
   const { user } = useUser();
   const [customPrompt, setCustomPrompt] = useState("");
   const [buyingMinion, setBuyingMinion] = useState<string | null>(null);
+  const [newsText, setNewsText] = useState<string>("NO NEWS");
+  const [isEventActive, setIsEventActive] = useState<boolean>(false);
+  const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
+
+  // Event News Banner Logic
+  useEffect(() => {
+    if (game.eventTriggered && !previousEventTriggered) {
+      setPreviousEventTriggered(true);
+      setNewsText(game.eventTitle || "MARKET EVENT");
+      setIsEventActive(true);
+
+      const timer = setTimeout(() => {
+        setNewsText("NO NEWS");
+        setIsEventActive(false);
+      }, 30000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [game.eventTriggered, previousEventTriggered, game.eventTitle]);
 
   // Debug: Log currentUser when component mounts
   useEffect(() => {
@@ -111,17 +124,26 @@ export default function Shops({ game, currentUser }: ShopsProps) {
       return;
     }
 
+    // Count existing bots of the same type to generate number
+    const existingBots = currentUser.bots || [];
+    const sameTypeBots = existingBots.filter((bot: any) =>
+      bot.botName && bot.botName.startsWith(minion.name)
+    );
+    const botNumber = sameTypeBots.length + 1;
+    const numberedBotName = `${minion.name} ${botNumber}`;
+
     setBuyingMinion(minion.id);
     try {
-      console.log('[Shops] Purchasing minion:', { 
-        minionPrice: minion.price, 
-        userId: currentUser.userId, 
-        gameId: game.gameId, 
-        minionType: minion.id 
+      console.log('[Shops] Purchasing minion:', {
+        minionPrice: minion.price,
+        userId: currentUser.userId,
+        gameId: game.gameId,
+        minionType: minion.id,
+        botName: numberedBotName
       });
-      
-      await buyMinion(minion.price, currentUser.userId, game.gameId, minion.id, minion.name);
-      console.log(`[Shops] ✅ Successfully purchased ${minion.name}!`);
+
+      await buyMinion(minion.price, currentUser.userId, game.gameId, minion.id, numberedBotName);
+      console.log(`[Shops] ✅ Successfully purchased ${numberedBotName}!`);
     } catch (error) {
       console.error("[Shops] ❌ Failed to buy minion:", error);
     } finally {
@@ -155,18 +177,27 @@ export default function Shops({ game, currentUser }: ShopsProps) {
       return;
     }
 
+    // Count existing custom minions to generate number
+    const existingBots = currentUser.bots || [];
+    const customBots = existingBots.filter((bot: any) =>
+      bot.botName && bot.botName.startsWith("Custom Minion")
+    );
+    const botNumber = customBots.length + 1;
+    const numberedBotName = `Custom Minion ${botNumber}`;
+
     setBuyingMinion("custom");
     try {
-      console.log('[Shops] Creating custom minion:', { 
-        minionPrice: CUSTOM_MINION_PRICE, 
-        userId: currentUser.userId, 
-        gameId: game.gameId, 
-        customPrompt 
+      console.log('[Shops] Creating custom minion:', {
+        minionPrice: CUSTOM_MINION_PRICE,
+        userId: currentUser.userId,
+        gameId: game.gameId,
+        customPrompt,
+        botName: numberedBotName
       });
-      
-      await buyMinion(CUSTOM_MINION_PRICE, currentUser.userId, game.gameId, "custom", "Custom Minion", customPrompt);
+
+      await buyMinion(CUSTOM_MINION_PRICE, currentUser.userId, game.gameId, "custom", numberedBotName, customPrompt);
       setCustomPrompt("");
-      console.log("[Shops] ✅ Successfully created custom minion!");
+      console.log(`[Shops] ✅ Successfully created ${numberedBotName}!`);
     } catch (error) {
       console.error("[Shops] ❌ Failed to buy custom minion:", error);
     } finally {
@@ -175,19 +206,36 @@ export default function Shops({ game, currentUser }: ShopsProps) {
   };
 
   return (
-    <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <h2 className="font-retro text-4xl text-[var(--primary-light)]">
+    <div>
+      {/* Header with News Flash */}
+      <div className="flex items-center justify-between mb-6">
+        <h2 className="font-retro text-4xl text-[var(--primary)]">
           MINION SHOP
         </h2>
-        <div className="text-right">
-          <div className="text-sm text-[var(--foreground)]">Your Balance</div>
-          <div className="font-retro text-3xl text-[var(--success)]">
-            ${currentUser.usd.toFixed(2)} USD
+        <div className="flex items-center gap-3 flex-1 ml-8">
+          {/* News Carousel Banner */}
+          <div className="px-8 py-2 overflow-hidden relative flex items-center flex-grow">
+            <div className="overflow-hidden relative w-full flex items-center">
+              <div
+                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast flex items-center gap-2 ${
+                  isEventActive ? 'text-white font-bold' : 'text-gray-700'
+                }`}
+              >
+                {isEventActive && <TbAlertTriangle className="text-4xl" />}
+                <span>{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •</span>
+              </div>
+            </div>
+          </div>
+          <div className="text-right flex-shrink-0">
+            <div className="text-sm text-[var(--foreground)]">Your Balance</div>
+            <div className="font-retro text-3xl text-[var(--success)]">
+              ${currentUser.usd.toFixed(2)} USD
+            </div>
           </div>
         </div>
       </div>
+
+      <div className="space-y-6">
 
       {/* Custom Minion Section */}
       <Card title="CUSTOM MINION" padding="lg">
@@ -322,7 +370,7 @@ export default function Shops({ game, currentUser }: ShopsProps) {
           })}
         </div>
       </Card>
-
+      </div>
     </div>
   );
 }
