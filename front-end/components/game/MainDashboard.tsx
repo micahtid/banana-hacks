@@ -10,7 +10,7 @@ import {
   sellCoins,
   toggleBot,
 } from "@/utils/database_functions";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import { useUser } from "@/providers/UserProvider";
 import { Line } from "react-chartjs-2";
 import {
@@ -194,13 +194,14 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   const elapsedSeconds = getElapsedSeconds();
   const startIndex = Math.max(0, coinsArr.length - DISPLAY_WINDOW_SECONDS);
-  const displayData = coinsArr.slice(startIndex);
+  // Ensure we always have at least one data point to prevent flashing
+  const displayData = coinsArr.length > 0 ? coinsArr.slice(startIndex) : [1.0];
   const displayLabels = displayData.map((_, index) => {
     const dataPointSecond = elapsedSeconds - (displayData.length - 1 - index);
     return formatTimeLabel(Math.max(0, dataPointSecond));
   });
 
-  const chartData = {
+  const chartData = useMemo(() => ({
     labels: displayLabels,
     datasets: [
       {
@@ -215,10 +216,11 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         borderWidth: 2,
       },
     ],
-  };
+  }), [displayLabels.length, displayData.length, displayData[displayData.length - 1]]);
 
   // --- Chart Limits ---
-  const validPrices = coinsArr.filter((p) => typeof p === "number" && p > 0);
+  // Use only the displayed data for scale calculation to prevent flashing
+  const validPrices = displayData.filter((p) => typeof p === "number" && p > 0);
   const minPrice = validPrices.length > 0 ? Math.min(...validPrices) : 0.5;
   const maxPrice = validPrices.length > 0 ? Math.max(...validPrices) : 1.5;
   const gridMin = Math.floor(minPrice * 0.8 * 10) / 10;
@@ -226,7 +228,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const gridRange = gridMax - gridMin;
   const gridStep = Math.ceil((gridRange / 5) * 10) / 10;
 
-  const chartOptions = {
+  const chartOptions = useMemo(() => ({
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
@@ -268,7 +270,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       },
     },
     animation: { duration: 0 },
-  };
+  }), [gridMin, gridMax, gridStep]);
 
   // --- Portfolio Stats ---
   const portfolioValue = usd + coins * currentPrice;
@@ -277,12 +279,12 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   return (
     <div className="h-screen flex flex-col overflow-hidden p-8">
       <div className="flex items-center justify-between mb-6">
-        <h2 className="font-retro text-4xl text-[var(--primary-light)]">
+        <h2 className="font-retro text-4xl text-[var(--primary)]">
           MAIN DASHBOARD
         </h2>
         <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
-          <div className="text-sm text-[var(--foreground)] mb-1">TIME REMAINING</div>
-          <div className="font-retro text-3xl text-[var(--primary)] text-center">
+          <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
+          <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
             {timeRemaining}
           </div>
         </div>
@@ -295,13 +297,13 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         <div className="flex flex-col min-h-0 overflow-hidden">
           <Card title="BANANA COIN MARKET" padding="lg" className="h-full flex flex-col">
             <div className="flex-1 min-h-0">
-              <Line data={chartData} options={chartOptions} />
+              <Line key="banana-coin-chart" data={chartData} options={chartOptions} />
             </div>
             <div className="mt-4 p-4 border-t-2 border-[var(--border)]">
               <div className="flex items-center justify-between">
                 <div>
-                  <div className="text-sm text-[var(--foreground)]">Current Price</div>
-                  <div className="font-retro text-3xl text-[var(--primary)]">
+                  <div className="text-sm text-[var(--primary)]">Current Price</div>
+                  <div className="font-retro text-3xl text-[var(--primary-dark)]">
                     ${currentPrice.toFixed(4)}
                   </div>
                   <div
@@ -315,8 +317,8 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm text-[var(--foreground)]">Total Volume</div>
-                  <div className="font-retro text-2xl text-[var(--accent)]">
+                  <div className="text-sm text-[var(--primary)]">Total Volume</div>
+                  <div className="font-retro text-2xl text-[var(--primary-dark)]">
                     {interactionsArr.length} trades
                   </div>
                 </div>
@@ -329,14 +331,14 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           <Card title="WALLET" padding="lg">
             <div className="space-y-3">
               <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
-                <div className="text-sm text-[var(--foreground)]">US Dollars</div>
+                <div className="text-sm text-[var(--primary)]">US Dollars</div>
                 <div className="font-retro text-2xl text-[var(--success)]">
                   ${usd.toFixed(2)}
                 </div>
               </div>
               <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
-                <div className="text-sm text-[var(--foreground)]">Banana Coins</div>
-                <div className="font-retro text-2xl text-[var(--primary)]">
+                <div className="text-sm text-[var(--primary)]">Banana Coins</div>
+                <div className="font-retro text-2xl text-[var(--primary-dark)]">
                   {coins.toFixed(2)} BC
                 </div>
               </div>
@@ -355,7 +357,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 min="0"
                 step="0.01"
               />
-              <div className="text-xs text-[var(--foreground)] -mt-2">
+              <div className="text-xs text-[var(--primary)] -mt-2">
                 Cost: $
                 {(parseFloat(amount || "0") * currentPrice).toFixed(4)} USD (@ $
                 {currentPrice.toFixed(4)}/BC)
@@ -386,8 +388,8 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           <Card title={`BOTS (${bots.length})`} padding="lg">
             {bots.length === 0 ? (
               <div className="text-center py-6">
-                <p className="text-[var(--foreground)] mb-3">No bots yet</p>
-                <p className="text-sm text-[var(--foreground)]">
+                <p className="text-[var(--primary)] mb-3">No bots yet</p>
+                <p className="text-sm text-[var(--primary)]">
                   Visit the Shops tab to buy trading bots
                 </p>
               </div>
@@ -400,18 +402,18 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   const coinBalance = typeof bot.coinBalance === 'number' ? bot.coinBalance : 0;
                   const startingBalance = typeof bot.startingUsdBalance === 'number' ? bot.startingUsdBalance : 0;
                   const performance = startingBalance > 0 ? ((usdBalance + coinBalance * currentPrice - startingBalance) / startingBalance * 100) : 0;
-                  
+
                   return (
                     <div
                       key={botId || Math.random()}
                       className={`p-3 border-2 transition-colors ${
-                        isActive 
-                          ? 'border-[var(--success)] bg-[var(--background)]' 
+                        isActive
+                          ? 'border-[var(--success)] bg-[var(--background)]'
                           : 'border-[var(--border)] bg-[var(--background)] opacity-70'
                       }`}
                     >
                       <div className="flex items-center justify-between mb-2">
-                        <div className="font-retro text-lg text-[var(--primary-light)]">
+                        <div className="font-retro text-lg text-[var(--primary-dark)]">
                           {bot.botName ?? "Bot"}
                         </div>
                         <Button
@@ -427,10 +429,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                             : "Start"}
                         </Button>
                       </div>
-                      <div className="text-xs text-[var(--foreground)] space-y-1">
+                      <div className="text-xs text-[var(--primary)] space-y-1">
                         <div className="flex justify-between">
                           <span>Status:</span>
-                          <span className={isActive ? "text-[var(--success)]" : "text-[var(--foreground)]"}>
+                          <span className={isActive ? "text-[var(--success)]" : "text-[var(--primary)]"}>
                             {isActive ? "Active" : "Stopped"}
                           </span>
                         </div>
@@ -442,7 +444,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                         </div>
                         <div className="flex justify-between">
                           <span>BC Balance:</span>
-                          <span className="text-[var(--primary)]">
+                          <span className="text-[var(--primary-dark)]">
                             {coinBalance.toFixed(2)} BC
                           </span>
                         </div>
