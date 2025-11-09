@@ -507,16 +507,37 @@ async def buy_coins(request: TradeRequest):
                     "newCoins": user_coins
                 }
             
+            # Calculate expected balances after transaction
+            expected_usd = max(0.0, user_usd - cost)
+            expected_coins = max(0.0, user_coins + request.amount)
+            
+            # Check if transaction was already applied (prevents double-processing on retry)
+            # If balances already match expected values, transaction was already completed
+            current_usd_check = float(user_data.get('usd', user_data.get('usdBalance', 0)))
+            current_coins_check = float(user_data.get('coins', user_data.get('coinBalance', 0)))
+            if abs(current_usd_check - expected_usd) < 0.01 and abs(current_coins_check - expected_coins) < 0.01:
+                # Transaction already applied, return success with current balances
+                logger.info(f"Transaction already applied for user {request.userId}, returning current state")
+                return {
+                    "success": True,
+                    "action": "buy",
+                    "amount": request.amount,
+                    "cost": cost,
+                    "price": current_price,
+                    "newUsd": current_usd_check,
+                    "newCoins": current_coins_check
+                }
+            
             # Execute trade (update both field name conventions) - prevent negative balances - ONLY update user's balances
             if 'usd' in user_data:
-                user_data['usd'] = max(0.0, user_usd - cost)
+                user_data['usd'] = expected_usd
             if 'usdBalance' in user_data:
-                user_data['usdBalance'] = max(0.0, user_usd - cost)
+                user_data['usdBalance'] = expected_usd
             
             if 'coins' in user_data:
-                user_data['coins'] = max(0.0, user_coins + request.amount)
+                user_data['coins'] = expected_coins
             if 'coinBalance' in user_data:
-                user_data['coinBalance'] = max(0.0, user_coins + request.amount)
+                user_data['coinBalance'] = expected_coins
             user_data['lastInteractionT'] = datetime.now().isoformat()
             user_data['lastInteractionV'] = market.current_tick
             
@@ -658,17 +679,38 @@ async def sell_coins(request: TradeRequest):
                         "newCoins": user_coins
                     }
             
+            # Calculate expected balances after transaction
+            expected_usd = max(0.0, user_usd + revenue)
+            expected_coins = max(0.0, user_coins - actual_amount)
+            
+            # Check if transaction was already applied (prevents double-processing on retry)
+            # If balances already match expected values, transaction was already completed
+            current_usd_check = float(user_data.get('usd', user_data.get('usdBalance', 0)))
+            current_coins_check = float(user_data.get('coins', user_data.get('coinBalance', 0)))
+            if abs(current_usd_check - expected_usd) < 0.01 and abs(current_coins_check - expected_coins) < 0.01:
+                # Transaction already applied, return success with current balances
+                logger.info(f"Transaction already applied for user {request.userId}, returning current state")
+                return {
+                    "success": True,
+                    "action": "sell",
+                    "amount": actual_amount,
+                    "revenue": revenue,
+                    "price": current_price,
+                    "newUsd": current_usd_check,
+                    "newCoins": current_coins_check
+                }
+            
             # Execute trade (update both field name conventions) - prevent negative balances
             # Use the already-converted float values to ensure type consistency
             if 'coins' in user_data:
-                user_data['coins'] = max(0.0, user_coins - actual_amount)
+                user_data['coins'] = expected_coins
             if 'coinBalance' in user_data:
-                user_data['coinBalance'] = max(0.0, user_coins - actual_amount)
+                user_data['coinBalance'] = expected_coins
             
             if 'usd' in user_data:
-                user_data['usd'] = max(0.0, user_usd + revenue)
+                user_data['usd'] = expected_usd
             if 'usdBalance' in user_data:
-                user_data['usdBalance'] = max(0.0, user_usd + revenue)
+                user_data['usdBalance'] = expected_usd
             
             user_data['lastInteractionT'] = datetime.now().isoformat()
             user_data['lastInteractionV'] = market.current_tick
