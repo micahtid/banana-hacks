@@ -22,20 +22,22 @@ export async function POST(request: NextRequest) {
       creatorId: userId,
       isStarted: false,
       isEnded: false,
-      duration: duration || 30,  // Default: 30 minutes (not 300!)
+      durationMinutes: duration || 30,  // Default: 30 minutes
       maxPlayers: maxPlayers || 4,
+      eventTime: new Date().toISOString(),
       players: JSON.stringify([{
-        userId,
-        userName,
-        coins: 0,
-        usd: 1000,
+        playerId: userId,
+        playerName: userName,
+        coinBalance: 0,
+        usdBalance: 10000,
+        lastInteractionValue: 0,
+        lastInteractionTime: new Date().toISOString(),
         bots: [],
-        lastInteractionV: 0,
-        lastInteractionT: new Date().toISOString(),
       }]),
-      coinPrice: 1.0,  // Match market initial price (1M USD / 1M BC = $1.00)
-      interactions: 0,
-      eventTimer: 0,
+      coinHistory: JSON.stringify([1.0]),  // Initial price
+      totalCoin: 1000000,  // 1M coins in market
+      totalUsd: 1000000,   // 1M USD in market
+      interactions: JSON.stringify([]),
       createdAt: Date.now(),
     };
 

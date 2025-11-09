@@ -3,7 +3,12 @@
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
-import { type Game, type User, buyCoins, sellCoins } from "@/utils/database_functions";
+import {
+  type Game,
+  type User,
+  buyCoins,
+  sellCoins,
+} from "@/utils/database_functions";
 import { useState, useEffect } from "react";
 import { useUser } from "@/providers/UserProvider";
 import { Line } from "react-chartjs-2";
@@ -19,7 +24,6 @@ import {
   Filler,
 } from "chart.js";
 
-// Register ChartJS components
 ChartJS.register(
   CategoryScale,
   LinearScale,
@@ -38,15 +42,24 @@ interface MainDashboardProps {
 
 export default function MainDashboard({ game, currentUser }: MainDashboardProps) {
   const { user } = useUser();
-  const [amount, setAmount] = useState("");
+  const [amount, setAmount] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
 
-  const currentPrice = Number(game.coin.at(-1) ?? 1.0);
-  const previousPrice = game.coin.length > 1 ? Number(game.coin.at(-2) ?? 1.0) : currentPrice;
-  const priceChange = currentPrice - previousPrice;
-  const priceChangePercent = previousPrice !== 0 ? ((priceChange / previousPrice) * 100) : 0;
+  // Safe defaults for optional arrays or values
+  const coinsArr = Array.isArray(game.coin) ? game.coin : [];
+  const interactionsArr = Array.isArray(game.interactions)
+    ? game.interactions
+    : [];
 
+  const currentPrice = coinsArr.length > 0 ? Number(coinsArr.at(-1)) : 1.0;
+  const previousPrice =
+    coinsArr.length > 1 ? Number(coinsArr.at(-2)) : currentPrice;
+  const priceChange = currentPrice - previousPrice;
+  const priceChangePercent =
+    previousPrice !== 0 ? (priceChange / previousPrice) * 100 : 0;
+
+  // --- Timer Logic ---
   useEffect(() => {
     if (!game.startTime || !game.isStarted) {
       setTimeRemaining("--:--");
@@ -55,47 +68,48 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
     const updateTimer = () => {
       const now = new Date();
-
-      // Handle Firestore Timestamp objects
       let startTime: Date;
-      if (!game.startTime) {
-        setTimeRemaining("--:--");
-        return;
-      } else if (typeof game.startTime === 'object' && 'seconds' in game.startTime) {
-        // Firestore Timestamp
-        startTime = new Date((game.startTime as any).seconds * 1000);
+
+      if (!game.startTime) return setTimeRemaining("--:--");
+
+      if (
+        typeof game.startTime === "object" &&
+        "seconds" in game.startTime &&
+        typeof (game.startTime as any).seconds === "number"
+      ) {
+        startTime = new Date((game.startTime as { seconds: number }).seconds * 1000);
       } else if (game.startTime instanceof Date) {
         startTime = game.startTime;
       } else {
-        startTime = new Date(game.startTime);
+        startTime = new Date(game.startTime as string);
       }
 
-      const endTime = new Date(startTime.getTime() + game.gameDuration * 60000);
+      const durationMinutes = typeof game.gameDuration === "number" ? game.gameDuration : 0;
+      const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
       const diff = endTime.getTime() - now.getTime();
 
-      if (diff <= 0) {
-        setTimeRemaining("00:00");
-        return;
-      }
+      if (diff <= 0) return setTimeRemaining("00:00");
 
       const minutes = Math.floor(diff / 60000);
       const seconds = Math.floor((diff % 60000) / 1000);
-      setTimeRemaining(`${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2, '0')}`);
+      setTimeRemaining(
+        `${minutes.toString().padStart(2, "0")}:${seconds
+          .toString()
+          .padStart(2, "0")}`
+      );
     };
 
     updateTimer();
     const interval = setInterval(updateTimer, 1000);
-
     return () => clearInterval(interval);
   }, [game.startTime, game.gameDuration, game.isStarted]);
 
+  // --- Actions ---
   const handleBuy = async () => {
     if (!user || !amount || parseFloat(amount) <= 0) return;
-
     setActionLoading("buy");
     try {
-      // TO UPDATE: This will call backend buy(userId, numBC, gameId)
-      await buyCoins(user.uid, parseFloat(amount), game.gameId);
+      await buyCoins(user.uid, parseFloat(amount), game.gameId ?? "");
       setAmount("");
     } catch (error) {
       console.error("Failed to buy coins:", error);
@@ -106,11 +120,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   const handleSell = async () => {
     if (!user || !amount || parseFloat(amount) <= 0) return;
-
     setActionLoading("sell");
     try {
-      // TO UPDATE: This will call backend sell(userId, numBC, gameId)
-      await sellCoins(user.uid, parseFloat(amount), game.gameId);
+      await sellCoins(user.uid, parseFloat(amount), game.gameId ?? "");
       setAmount("");
     } catch (error) {
       console.error("Failed to sell coins:", error);
@@ -119,116 +131,124 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     }
   };
 
-  const usd = Number(currentUser.usd ?? 0);
-  const coins = Number(currentUser.coins ?? 0);
+  // --- Wallet Data ---
+  const usd = typeof currentUser.usd === "number" ? currentUser.usd : 0;
+  const coins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
   const bots = Array.isArray(currentUser.bots) ? currentUser.bots : [];
 
-  // Prepare chart data
-  // Convert index (seconds) to time format for display
-  const formatTimeLabel = (seconds: number) => {
-    if (seconds === 0) return '0s';
-    if (seconds < 60) return `${seconds}s`;
-    const minutes = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return secs === 0 ? `${minutes}m` : `${minutes}m${secs}s`;
+  // --- Chart Data ---
+  const DISPLAY_WINDOW_SECONDS = 60;
+
+  const formatTimeLabel = (totalSeconds: number): string => {
+    const minutes = Math.floor(totalSeconds / 60);
+    const secs = totalSeconds % 60;
+    return `${minutes}:${secs.toString().padStart(2, "0")}`;
   };
 
+  const getElapsedSeconds = (): number => {
+    if (!game.startTime || !game.isStarted) return 0;
+    const now = new Date();
+    let startTime: Date;
+
+    if (
+      typeof game.startTime === "object" &&
+      "seconds" in game.startTime &&
+      typeof (game.startTime as any).seconds === "number"
+    ) {
+      startTime = new Date((game.startTime as { seconds: number }).seconds * 1000);
+    } else if (game.startTime instanceof Date) {
+      startTime = game.startTime;
+    } else {
+      startTime = new Date(game.startTime as string);
+    }
+
+    return Math.floor((now.getTime() - startTime.getTime()) / 1000);
+  };
+
+  const elapsedSeconds = getElapsedSeconds();
+  const startIndex = Math.max(0, coinsArr.length - DISPLAY_WINDOW_SECONDS);
+  const displayData = coinsArr.slice(startIndex);
+  const displayLabels = displayData.map((_, index) => {
+    const dataPointSecond = elapsedSeconds - (displayData.length - 1 - index);
+    return formatTimeLabel(Math.max(0, dataPointSecond));
+  });
+
   const chartData = {
-    labels: game.coin.map((_, index) => formatTimeLabel(index)),
+    labels: displayLabels,
     datasets: [
       {
         label: "Banana Coin Price",
-        data: game.coin,
+        data: displayData,
         borderColor: "rgb(212, 160, 23)",
         backgroundColor: "rgba(212, 160, 23, 0.1)",
-        tension: 0.4,
+        tension: 0,
         fill: true,
-        pointRadius: 2,
-        pointHoverRadius: 6,
+        pointRadius: 0,
+        pointHoverRadius: 0,
+        borderWidth: 2,
       },
     ],
   };
 
-  // Calculate price range for consistent grid
-  const prices = game.coin.filter(p => p > 0);
-  const minPrice = prices.length > 0 ? Math.min(...prices) : 0.5;
-  const maxPrice = prices.length > 0 ? Math.max(...prices) : 1.5;
-  const priceRange = maxPrice - minPrice;
-  const yAxisMin = Math.max(0, minPrice - priceRange * 0.1); // 10% padding below
-  const yAxisMax = maxPrice + priceRange * 0.1; // 10% padding above
+  // --- Chart Limits ---
+  const validPrices = coinsArr.filter((p) => typeof p === "number" && p > 0);
+  const minPrice = validPrices.length > 0 ? Math.min(...validPrices) : 0.5;
+  const maxPrice = validPrices.length > 0 ? Math.max(...validPrices) : 1.5;
+  const gridMin = Math.floor(minPrice * 0.8 * 10) / 10;
+  const gridMax = Math.ceil(maxPrice * 1.2 * 10) / 10;
+  const gridRange = gridMax - gridMin;
+  const gridStep = Math.ceil((gridRange / 5) * 10) / 10;
 
   const chartOptions = {
     responsive: true,
     maintainAspectRatio: false,
     plugins: {
-      legend: {
-        display: false,
-      },
+      legend: { display: false },
       tooltip: {
         backgroundColor: "rgba(42, 36, 16, 0.95)",
         titleColor: "#f5d76e",
         bodyColor: "#f5e6d3",
         borderColor: "#4a3c1f",
         borderWidth: 2,
-        titleFont: {
-          family: "var(--font-vt323), monospace",
-          size: 16,
-        },
-        bodyFont: {
-          family: "var(--font-geist-sans), sans-serif",
-          size: 14,
-        },
+        titleFont: { family: "VT323, monospace", size: 18 },
+        bodyFont: { family: "VT323, monospace", size: 16 },
         callbacks: {
-          title: function(context: any) {
-            return `Time: ${context[0].label}`;
-          },
-          label: function(context: any) {
-            return `Price: $${context.parsed.y.toFixed(4)}`;
-          },
+          title: (context: any) => `Time: ${context[0].label}`,
+          label: (context: any) => `Price: $${context.parsed.y.toFixed(4)}`,
         },
       },
     },
     scales: {
       x: {
-        grid: {
-          color: "rgba(74, 60, 31, 0.3)",
-        },
+        grid: { color: "rgba(74, 60, 31, 0.3)" },
         ticks: {
-          color: "#f5e6d3",
-          font: {
-            family: "var(--font-geist-mono), monospace",
-          },
-          maxTicksLimit: 10, // Limit number of x-axis labels for clarity
+          color: "#8b7355",
+          font: { family: "VT323, monospace", size: 16 },
+          maxTicksLimit: 10,
           autoSkip: true,
         },
       },
       y: {
-        min: yAxisMin,
-        max: yAxisMax,
-        grid: {
-          color: "rgba(74, 60, 31, 0.3)",
-        },
+        min: gridMin,
+        max: gridMax,
+        grid: { color: "rgba(74, 60, 31, 0.3)" },
         ticks: {
-          color: "#f5e6d3",
-          font: {
-            family: "var(--font-geist-mono), monospace",
-          },
-          callback: function(value: any) {
-            return '$' + Number(value).toFixed(3);
-          },
-          stepSize: priceRange / 5, // Consistent 5 grid lines
+          color: "#8b7355",
+          font: { family: "VT323, monospace", size: 16 },
+          callback: (value: number | string) => "$" + Number(value).toFixed(2),
+          stepSize: gridStep,
         },
       },
     },
+    animation: { duration: 0 },
   };
 
-  // Calculate portfolio value
-  const portfolioValue = usd + (coins * currentPrice);
+  // --- Portfolio Stats ---
+  const portfolioValue = usd + coins * currentPrice;
   const portfolioChange = ((portfolioValue - 10000) / 10000) * 100;
 
   return (
     <div className="h-screen flex flex-col overflow-hidden p-8">
-      {/* Header with Timer */}
       <div className="flex items-center justify-between mb-6">
         <h2 className="font-retro text-4xl text-[var(--primary-light)]">
           MAIN DASHBOARD
@@ -241,9 +261,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         </div>
       </div>
 
-      {/* Two Column Layout */}
-      <div style={{ display: 'grid', gridTemplateColumns: '65% 35%', gap: '1.5rem' }} className="flex-1 min-h-0">
-        {/* Left Column - Market Graph ONLY */}
+      <div
+        style={{ display: "grid", gridTemplateColumns: "65% 35%", gap: "1.5rem" }}
+        className="flex-1 min-h-0"
+      >
         <div className="flex flex-col min-h-0 overflow-hidden">
           <Card title="BANANA COIN MARKET" padding="lg" className="h-full flex flex-col">
             <div className="flex-1 min-h-0">
@@ -256,14 +277,20 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   <div className="font-retro text-3xl text-[var(--primary)]">
                     ${currentPrice.toFixed(4)}
                   </div>
-                  <div className={`text-sm ${priceChange >= 0 ? 'text-green-500' : 'text-red-500'}`}>
-                    {priceChange >= 0 ? '▲' : '▼'} {Math.abs(priceChange).toFixed(4)} ({priceChangePercent >= 0 ? '+' : ''}{priceChangePercent.toFixed(2)}%)
+                  <div
+                    className={`text-sm ${
+                      priceChange >= 0 ? "text-green-500" : "text-red-500"
+                    }`}
+                  >
+                    {priceChange >= 0 ? "▲" : "▼"} {Math.abs(priceChange).toFixed(4)} (
+                    {priceChangePercent >= 0 ? "+" : ""}
+                    {priceChangePercent.toFixed(2)}%)
                   </div>
                 </div>
                 <div className="text-right">
                   <div className="text-sm text-[var(--foreground)]">Total Volume</div>
                   <div className="font-retro text-2xl text-[var(--accent)]">
-                    {game.interactions || 0} trades
+                    {interactionsArr.length} trades
                   </div>
                 </div>
               </div>
@@ -271,9 +298,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           </Card>
         </div>
 
-        {/* Right Column - Wallet, Actions, Bots with Scroll */}
         <div className="flex flex-col gap-4 min-h-0 overflow-y-auto pr-2">
-          {/* Wallet */}
           <Card title="WALLET" padding="lg">
             <div className="space-y-3">
               <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
@@ -291,7 +316,6 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
             </div>
           </Card>
 
-          {/* Actions */}
           <Card title="ACTIONS" padding="lg">
             <div className="space-y-4">
               <Input
@@ -305,7 +329,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 step="0.01"
               />
               <div className="text-xs text-[var(--foreground)] -mt-2">
-                Cost: ${(parseFloat(amount || "0") * currentPrice).toFixed(4)} USD (@ ${currentPrice.toFixed(4)}/BC)
+                Cost: $
+                {(parseFloat(amount || "0") * currentPrice).toFixed(4)} USD (@ $
+                {currentPrice.toFixed(4)}/BC)
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <Button
@@ -330,29 +356,25 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
             </div>
           </Card>
 
-          {/* Bots */}
           <Card title={`BOTS (${bots.length})`} padding="lg">
             {bots.length === 0 ? (
               <div className="text-center py-6">
-                <p className="text-[var(--foreground)] mb-3">
-                  No bots yet
-                </p>
+                <p className="text-[var(--foreground)] mb-3">No bots yet</p>
                 <p className="text-sm text-[var(--foreground)]">
                   Visit the Shops tab to buy trading bots
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {bots.map((bot) => (
+                {bots.map((bot: any) => (
                   <div
-                    key={bot.botId}
+                    key={bot.botId ?? Math.random()}
                     className="p-3 border-2 border-[var(--border)] bg-[var(--background)] hover:border-[var(--primary)] transition-colors"
                   >
                     <div className="font-retro text-lg text-[var(--primary-light)] mb-2">
-                      {bot.botName}
+                      {bot.botName ?? "Unnamed Bot"}
                     </div>
                     <div className="text-sm text-[var(--foreground)]">
-                      {/* Mock data for now */}
                       <div className="flex justify-between">
                         <span>Trades:</span>
                         <span className="text-[var(--accent)]">

@@ -48,7 +48,7 @@ export async function POST(request: NextRequest) {
     // ✨ NEW: Start background market updates via FastAPI
     try {
       const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
-      const durationMinutes = parseInt(gameData.duration || '300');
+      const durationMinutes = parseInt(gameData.durationMinutes || gameData.duration || '30');
       const durationSeconds = durationMinutes * 60; // Convert minutes to seconds for FastAPI
       
       const fastApiResponse = await fetch(`${backendUrl}/api/game/start-market`, {
@@ -57,9 +57,9 @@ export async function POST(request: NextRequest) {
         body: JSON.stringify({
           gameId,
           duration: durationSeconds,  // Now in seconds!
-          totalUsd: 1000000,
-          totalBc: 1000000,
-          initialPrice: parseFloat(gameData.coinPrice || '1.0'),
+          totalUsd: parseFloat(gameData.totalUsd || '1000000'),
+          totalBc: parseFloat(gameData.totalCoin || '1000000'),
+          initialPrice: 1.0,
           updateInterval: 1.0
         })
       });
