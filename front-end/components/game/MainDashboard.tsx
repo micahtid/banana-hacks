@@ -222,6 +222,22 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const coins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
   const minions = Array.isArray(currentUser.bots) ? currentUser.bots : [];
 
+  // Bot price mapping for performance calculation
+  const BOT_PRICES: { [key: string]: number } = {
+    "Random Bot": 300,
+    "Momentum Bot": 800,
+    "Mean Reversion Bot": 750,
+    "Market Maker Bot": 1200,
+    "Hedger Bot": 1000,
+    "Custom Minion": 1750,
+    // Backend type names (for backward compatibility)
+    "random": 300,
+    "momentum": 800,
+    "mean_reversion": 750,
+    "market_maker": 1200,
+    "hedger": 1000,
+  };
+
   // --- Chart Data ---
   const DISPLAY_WINDOW_SECONDS = 60;
 
@@ -468,19 +484,22 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   const minionId = minion.botId ?? '';
                   const coinBalance = typeof minion.coinBalance === 'number' ? minion.coinBalance : 0;
 
-                  // Calculate performance based on BC value in USD
-                  // Since bots use the user's wallet, we track their BC holdings' value change
+                  // Calculate performance based on BC holdings value change
                   const currentValue = coinBalance * currentPrice;
 
-                  // If we have a starting balance, use it; otherwise estimate from initial bot cost
-                  // Most bots start with ~$500-1500, so we can estimate initial BC based on that
-                  const estimatedStartingUSD = 1000; // Rough average bot starting allocation
-                  const estimatedStartingBC = estimatedStartingUSD / (coinsArr[0] || 1); // Initial price
-                  const startingValue = estimatedStartingBC * (coinsArr[0] || 1);
+                  // Estimate bot's starting value from its purchase price
+                  // Bots start with their cost converted to BC at the price when purchased
+                  const botName = minion.botName ?? "";
+                  const baseBotName = botName.replace(/\s+\d+$/, ""); // Remove number suffix
+                  const botCost = BOT_PRICES[baseBotName] || BOT_PRICES[botName] || 1000;
 
-                  // Calculate performance as change in value
-                  const valueChange = currentValue - startingValue;
-                  const performancePercent = startingValue > 0 ? (valueChange / startingValue) * 100 : 0;
+                  // Use stored initial BC if available, otherwise estimate
+                  const initialBC = minion.initialCoinBalance || (botCost / (coinsArr[0] || 1));
+                  const initialValue = initialBC * (coinsArr[0] || 1);
+
+                  // Calculate performance
+                  const valueChange = currentValue - initialValue;
+                  const performancePercent = initialValue > 0 ? (valueChange / initialValue) * 100 : 0;
 
                   return (
                     <div
