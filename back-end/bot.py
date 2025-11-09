@@ -19,7 +19,7 @@ class Bot:
     def __init__(self, bot_id: Optional[str] = None,
                  is_toggled: bool = True, usd_given: float = 0.0,
                  usd: float = 0.0, bc: float = 0.0, bot_type: Optional[str] = None,
-                 behavior_coefficient: Optional[float] = None):
+                 behavior_coefficient: Optional[float] = None, user_id: Optional[str] = None):
         """
         Initialize a bot
         
@@ -31,6 +31,7 @@ class Bot:
             bc: Current BC (Banana Coin) balance in bot's wallet (not in Redis structure, but needed for trading)
             bot_type: Type of bot strategy (random, momentum, mean_reversion, market_maker, hedger)
             behavior_coefficient: Bot's behavior coefficient (0.8-1.2). If None, generated from bot_id
+            user_id: Owner user ID
         """
         self.bot_id = bot_id or str(uuid.uuid4())
         self.is_toggled = is_toggled
@@ -38,6 +39,7 @@ class Bot:
         self.usd = usd
         self.bc = bc
         self.bot_type = bot_type or 'random'
+        self.user_id = user_id
         self.parameters = self._get_default_parameters()
         
         # Bot-specific randomness seed based on bot_id for consistent uniqueness
@@ -298,7 +300,7 @@ class Bot:
         
         return {'action': 'hold', 'amount': 0.0}
     
-    def buy(self, amount: float, price: float, game_data: Dict) -> bool:
+    def buy(self, amount: float, price: float, game_data: Dict, user_id: Optional[str] = None) -> bool:
         """
         Execute buy trade
         
@@ -306,6 +308,7 @@ class Bot:
             amount: Amount of BC to buy
             price: Price per BC
             game_data: Game room data dict (will be modified)
+            user_id: Owner user ID (if applicable)
         
         Returns:
             True if successful, False otherwise
@@ -320,9 +323,28 @@ class Bot:
         self.usd -= cost
         self.bc += amount
         
-        # Update game totals
-        game_data['totalBc'] = game_data.get('totalBc', 0.0) - amount
-        game_data['totalUsd'] = game_data.get('totalUsd', 0.0) + cost
+        # Update game totals (market supplies) - convert from string if needed
+        total_bc = float(game_data.get('totalBc', 0.0))
+        total_usd = float(game_data.get('totalUsd', 0.0))
+        game_data['totalBc'] = total_bc - amount
+        game_data['totalUsd'] = total_usd + cost
+        
+        # Update user wallet if user_id is provided
+        if user_id and 'players' in game_data:
+            for player in game_data['players']:
+                # Check both userId and playerId for compatibility
+                player_id = player.get('userId') or player.get('playerId')
+                if player_id == user_id:
+                    # Bot's earnings go to the user (update both field name conventions)
+                    if 'coins' in player:
+                        player['coins'] = player.get('coins', 0.0) + amount
+                    if 'coinBalance' in player:
+                        player['coinBalance'] = player.get('coinBalance', 0.0) + amount
+                    if 'usd' in player:
+                        player['usd'] = player.get('usd', 0.0) - cost
+                    if 'usdBalance' in player:
+                        player['usdBalance'] = player.get('usdBalance', 0.0) - cost
+                    break
         
         # Append to interactions
         if 'interactions' not in game_data:
@@ -336,7 +358,7 @@ class Bot:
         
         return True
     
-    def sell(self, amount: float, price: float, game_data: Dict) -> bool:
+    def sell(self, amount: float, price: float, game_data: Dict, user_id: Optional[str] = None) -> bool:
         """
         Execute sell trade
         
@@ -344,6 +366,7 @@ class Bot:
             amount: Amount of BC to sell
             price: Price per BC
             game_data: Game room data dict (will be modified)
+            user_id: Owner user ID (if applicable)
         
         Returns:
             True if successful, False otherwise
@@ -358,9 +381,28 @@ class Bot:
         self.bc -= amount
         self.usd += revenue
         
-        # Update game totals
-        game_data['totalBc'] = game_data.get('totalBc', 0.0) + amount
-        game_data['totalUsd'] = game_data.get('totalUsd', 0.0) - revenue
+        # Update game totals (market supplies) - convert from string if needed
+        total_bc = float(game_data.get('totalBc', 0.0))
+        total_usd = float(game_data.get('totalUsd', 0.0))
+        game_data['totalBc'] = total_bc + amount
+        game_data['totalUsd'] = total_usd - revenue
+        
+        # Update user wallet if user_id is provided
+        if user_id and 'players' in game_data:
+            for player in game_data['players']:
+                # Check both userId and playerId for compatibility
+                player_id = player.get('userId') or player.get('playerId')
+                if player_id == user_id:
+                    # Bot's earnings go to the user (update both field name conventions)
+                    if 'coins' in player:
+                        player['coins'] = player.get('coins', 0.0) - amount
+                    if 'coinBalance' in player:
+                        player['coinBalance'] = player.get('coinBalance', 0.0) - amount
+                    if 'usd' in player:
+                        player['usd'] = player.get('usd', 0.0) + revenue
+                    if 'usdBalance' in player:
+                        player['usdBalance'] = player.get('usdBalance', 0.0) + revenue
+                    break
         
         # Append to interactions
         if 'interactions' not in game_data:
@@ -388,7 +430,8 @@ class Bot:
                 'bc': str(self.bc),
                 'bot_type': self.bot_type,
                 'behavior_coefficient': str(self.behavior_coefficient),
-                'parameters': json.dumps(self.parameters)
+                'parameters': json.dumps(self.parameters),
+                'user_id': self.user_id or ''
             }
             r.hset(bot_key, mapping=bot_data)
             
@@ -437,7 +480,8 @@ class Bot:
                 usd=float(bot_data.get('usd', 0)),
                 bc=float(bot_data.get('bc', 0)),
                 bot_type=bot_data.get('bot_type', 'random'),
-                behavior_coefficient=behavior_coefficient
+                behavior_coefficient=behavior_coefficient,
+                user_id=bot_data.get('user_id', '')
             )
             bot.parameters = parameters
             
@@ -476,21 +520,23 @@ class Bot:
         
         while True:
             try:
-                # Check if bot is toggled off
-                if not self.is_toggled:
-                    # Reload from Redis to check if toggled back on
-                    r = get_redis_connection()
-                    bot_key = f"bot:{game_id}:{self.bot_id}"
-                    if r.exists(bot_key):
-                        bot_data = r.hgetall(bot_key)
-                        self.is_toggled = bot_data.get('is_toggled', 'True').lower() == 'true'
-                        if not self.is_toggled:
-                            time.sleep(update_interval)
-                            continue
-                    else:
-                        # Bot removed, exit
-                        print(f"Bot {self.bot_id} removed, stopping")
-                        break
+                # Reload toggle state from Redis every iteration
+                r = get_redis_connection()
+                bot_key = f"bot:{game_id}:{self.bot_id}"
+                if r.exists(bot_key):
+                    bot_data = r.hgetall(bot_key)
+                    # Python stores True/False, Redis returns as string "True" or "False"
+                    is_toggled_str = bot_data.get('is_toggled', 'True')
+                    self.is_toggled = (is_toggled_str == 'True' or is_toggled_str == 'true' or is_toggled_str == '1')
+                    
+                    if not self.is_toggled:
+                        # Bot is OFF - sleep and continue checking
+                        time.sleep(update_interval)
+                        continue
+                else:
+                    # Bot removed, exit
+                    print(f"Bot {self.bot_id} removed, stopping")
+                    break
                 
                 # Get real-time access to coins (price history)
                 coins = self._get_coins_from_redis(game_id)
@@ -510,9 +556,9 @@ class Bot:
                     if game_data:
                         success = False
                         if decision['action'] == 'buy':
-                            success = self.buy(decision['amount'], current_price, game_data)
+                            success = self.buy(decision['amount'], current_price, game_data, self.user_id)
                         elif decision['action'] == 'sell':
-                            success = self.sell(decision['amount'], current_price, game_data)
+                            success = self.sell(decision['amount'], current_price, game_data, self.user_id)
                         
                         if success:
                             # Save updated bot state to Redis

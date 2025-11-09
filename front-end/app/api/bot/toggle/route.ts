@@ -1,54 +1,61 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRedisClient } from '@/utils/redis';
+
+const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://localhost:8000';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
     const { gameId, userId, botId } = body;
 
+    console.log('[Bot Toggle] Request received:', { gameId, userId, botId });
+
     if (!gameId || !userId || !botId) {
+      console.error('[Bot Toggle] Missing required fields');
       return NextResponse.json(
         { error: 'Missing required fields: gameId, userId, botId' },
         { status: 400 }
       );
     }
 
-    const redis = getRedisClient();
-    const gameExists = await redis.exists(`game:${gameId}`);
+    // Call Python backend to toggle bot
+    console.log('[Bot Toggle] Calling Python backend...');
+    const response = await fetch(`${PYTHON_API_URL}/api/bot/toggle`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        gameId,
+        userId,
+        botId,
+      }),
+    });
 
-    if (!gameExists) {
+    console.log('[Bot Toggle] Python backend response:', response.status);
+
+    if (!response.ok) {
+      const errorData = await response.json();
+      console.error('[Bot Toggle] Error from Python:', errorData);
       return NextResponse.json(
-        { error: 'Game not found' },
-        { status: 404 }
+        { error: errorData.detail || 'Failed to toggle bot' },
+        { status: response.status }
       );
     }
 
-    const gameData = await redis.hgetall(`game:${gameId}`);
-    const players = JSON.parse(gameData.players || '[]');
+    const data = await response.json();
+    console.log('[Bot Toggle] Success! New state:', data.isActive);
+    
+    // Transform response to match front-end format
+    const bot = {
+      id: data.botId,
+      active: data.isActive,
+      ...data.bot,
+    };
 
-    const playerIndex = players.findIndex((p: any) => p.userId === userId);
-    if (playerIndex === -1) {
-      return NextResponse.json(
-        { error: 'Player not found in game' },
-        { status: 404 }
-      );
-    }
-
-    const player = players[playerIndex];
-    const botIndex = player.bots?.findIndex((b: any) => b.id === botId);
-
-    if (botIndex === -1 || botIndex === undefined) {
-      return NextResponse.json(
-        { error: 'Bot not found' },
-        { status: 404 }
-      );
-    }
-
-    player.bots[botIndex].active = !player.bots[botIndex].active;
-
-    await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));
-
-    return NextResponse.json({ success: true, bot: player.bots[botIndex] });
+    return NextResponse.json({ 
+      success: true, 
+      bot 
+    });
   } catch (error) {
     console.error('Error toggling bot:', error);
     return NextResponse.json(
