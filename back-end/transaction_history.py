@@ -50,9 +50,9 @@ class TransactionHistory:
             tx_key = f"transactions:{game_id}"
             r.lpush(tx_key, json.dumps(transaction))
             
-            # Set expiration to match game duration (default: 30 days if game has no end time)
-            # This ensures transactions persist for the entire game period
-            r.expire(tx_key, 30 * 24 * 60 * 60)
+            # Set expiration to ensure transactions persist for the entire game period
+            # 90 days is more than sufficient for any game duration
+            r.expire(tx_key, 90 * 24 * 60 * 60)
             
             # Also update the legacy interactions format for backward compatibility
             TransactionHistory._update_interactions(game_id, transaction)

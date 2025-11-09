@@ -8,7 +8,7 @@ import {
   type User,
   buyCoins,
   sellCoins,
-  toggleBot,
+  toggleMinion,
 } from "@/utils/database_functions";
 import { useState, useEffect, useMemo } from "react";
 import { useUser } from "@/providers/UserProvider";
@@ -41,12 +41,28 @@ interface MainDashboardProps {
   currentUser: User;
 }
 
+// Helper function to get display name for a minion
+// Handles both new minions (with proper display names) and old minions (with backend types)
+function getMinionDisplayName(botName: string): string {
+  // If it's already a display name (has spaces or starts with capital), return as-is
+  if (botName.includes(' ') || /^[A-Z]/.test(botName)) {
+    return botName;
+  }
+  
+  // For old minions with backend types, convert to user-friendly format
+  // e.g., "mean_reversion" → "Mean Reversion Bot"
+  return botName
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ') + ' Bot';
+}
+
 export default function MainDashboard({ game, currentUser }: MainDashboardProps) {
   const { user } = useUser();
   const [amount, setAmount] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
-  const [togglingBot, setTogglingBot] = useState<string | null>(null);
+  const [togglingMinion, setTogglingMinion] = useState<string | null>(null);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
@@ -133,35 +149,35 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     }
   };
 
-  const handleToggleBot = async (botId: string) => {
+  const handleToggleMinion = async (minionId: string) => {
     if (!user) return;
     
-    console.log('[MainDashboard] Toggling bot:', {
-      botId,
+    console.log('[MainDashboard] Toggling minion:', {
+      minionId,
       userId: currentUser.userId,
       gameId: game.gameId
     });
     
-    setTogglingBot(botId);
+    setTogglingMinion(minionId);
     try {
-      await toggleBot(botId, currentUser.userId, game.gameId ?? "");
-      console.log('[MainDashboard] ✓ Bot toggled successfully');
+      await toggleMinion(minionId, currentUser.userId, game.gameId ?? "");
+      console.log('[MainDashboard] ✓ Minion toggled successfully');
       
       // Force refresh by waiting a moment for Redis to update
       setTimeout(() => {
         console.log('[MainDashboard] State should refresh from polling');
       }, 100);
     } catch (error) {
-      console.error("[MainDashboard] ❌ Failed to toggle bot:", error);
+      console.error("[MainDashboard] ❌ Failed to toggle minion:", error);
     } finally {
-      setTogglingBot(null);
+      setTogglingMinion(null);
     }
   };
 
   // --- Wallet Data ---
   const usd = typeof currentUser.usd === "number" ? currentUser.usd : 0;
   const coins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
-  const bots = Array.isArray(currentUser.bots) ? currentUser.bots : [];
+  const minions = Array.isArray(currentUser.bots) ? currentUser.bots : [];
 
   // --- Chart Data ---
   const DISPLAY_WINDOW_SECONDS = 60;
@@ -385,27 +401,27 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
             </div>
           </Card>
 
-          <Card title={`BOTS (${bots.length})`} padding="lg">
-            {bots.length === 0 ? (
+          <Card title={`MINIONS (${minions.length})`} padding="lg">
+            {minions.length === 0 ? (
               <div className="text-center py-6">
-                <p className="text-[var(--primary)] mb-3">No bots yet</p>
+                <p className="text-[var(--primary)] mb-3">No minions yet</p>
                 <p className="text-sm text-[var(--primary)]">
-                  Visit the Shops tab to buy trading bots
+                  Visit the Shops tab to buy trading minions
                 </p>
               </div>
             ) : (
               <div className="space-y-3">
-                {bots.map((bot: any) => {
-                  const isActive = bot.isActive ?? false;
-                  const botId = bot.botId ?? '';
-                  const usdBalance = typeof bot.usdBalance === 'number' ? bot.usdBalance : 0;
-                  const coinBalance = typeof bot.coinBalance === 'number' ? bot.coinBalance : 0;
-                  const startingBalance = typeof bot.startingUsdBalance === 'number' ? bot.startingUsdBalance : 0;
+                {minions.map((minion: any) => {
+                  const isActive = minion.isActive ?? false;
+                  const minionId = minion.botId ?? '';
+                  const usdBalance = typeof minion.usdBalance === 'number' ? minion.usdBalance : 0;
+                  const coinBalance = typeof minion.coinBalance === 'number' ? minion.coinBalance : 0;
+                  const startingBalance = typeof minion.startingUsdBalance === 'number' ? minion.startingUsdBalance : 0;
                   const performance = startingBalance > 0 ? ((usdBalance + coinBalance * currentPrice - startingBalance) / startingBalance * 100) : 0;
 
                   return (
                     <div
-                      key={botId || Math.random()}
+                      key={minionId || Math.random()}
                       className={`p-3 border-2 transition-colors ${
                         isActive
                           ? 'border-[var(--success)] bg-[var(--background)]'
@@ -414,15 +430,15 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                     >
                       <div className="flex items-center justify-between mb-2">
                         <div className="font-retro text-lg text-[var(--primary-dark)]">
-                          {bot.botName ?? "Bot"}
+                          {getMinionDisplayName(minion.botName ?? "Minion")}
                         </div>
                         <Button
-                          onClick={() => handleToggleBot(botId)}
+                          onClick={() => handleToggleMinion(minionId)}
                           variant={isActive ? "danger" : "success"}
                           size="sm"
-                          disabled={togglingBot !== null}
+                          disabled={togglingMinion !== null}
                         >
-                          {togglingBot === botId 
+                          {togglingMinion === minionId 
                             ? "..." 
                             : isActive 
                             ? "Stop" 

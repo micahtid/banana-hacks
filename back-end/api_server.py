@@ -78,6 +78,7 @@ class BotBuyRequest(BaseModel):
     userId: str
     botType: str = Field(..., description="Type of bot strategy")
     cost: float = Field(..., gt=0, description="Cost in USD")
+    botName: Optional[str] = Field(None, description="Display name for the bot (e.g., 'HODL Master')")
     customPrompt: Optional[str] = None
 
 # ============================================================================
@@ -87,16 +88,19 @@ class BotBuyRequest(BaseModel):
 async def run_market_updates(game_id: str, duration: int, update_interval: float):
     """
     Background task that updates the market every `update_interval` seconds
-    for the specified duration.
+    for the specified duration. Optimized to maintain consistent timing.
     """
     start_time = time.time()
     end_time = start_time + duration
     update_count = 0
+    next_update_time = start_time + update_interval
     
     logger.info(f"🎮 Starting market updates for game {game_id} - Duration: {duration}s")
     
     try:
         while time.time() < end_time:
+            update_start = time.time()
+            
             try:
                 # Load market from Redis
                 market = await asyncio.to_thread(Market.load_from_redis, game_id)
@@ -131,8 +135,16 @@ async def run_market_updates(game_id: str, duration: int, update_interval: float
                 logger.error(f"Error updating market {game_id}: {e}")
                 # Continue running even if one update fails
             
-            # Wait for next update interval
-            await asyncio.sleep(update_interval)
+            # Calculate sleep time to maintain consistent interval
+            update_elapsed = time.time() - update_start
+            sleep_time = max(0, update_interval - update_elapsed)
+            
+            # If we're behind schedule, log a warning
+            if sleep_time == 0:
+                logger.warning(f"Market update took {update_elapsed:.3f}s (longer than interval {update_interval}s)")
+            
+            await asyncio.sleep(sleep_time)
+            next_update_time += update_interval
         
         # Game finished
         logger.info(f"✅ Game {game_id} completed after {duration} seconds, {update_count} updates")
@@ -510,7 +522,7 @@ async def sell_coins(request: TradeRequest):
 @app.post("/api/bot/buy")
 async def buy_bot(request: BotBuyRequest):
     """
-    Purchase a bot for a user.
+    Purchase a minion for a user.
     """
     try:
         # Get user wallet from Redis
@@ -542,7 +554,7 @@ async def buy_bot(request: BotBuyRequest):
         if user_usd < request.cost:
             raise HTTPException(status_code=400, detail="Insufficient USD")
         
-        # Map front-end bot types to backend bot types
+        # Map front-end minion types to backend bot types
         bot_type_map = {
             'premade': 'random',
             'custom': 'custom',
@@ -556,11 +568,11 @@ async def buy_bot(request: BotBuyRequest):
         
         backend_bot_type = bot_type_map.get(request.botType, 'random')
         
-        # Generate custom strategy code if bot type is custom
+        # Generate custom strategy code if minion type is custom
         custom_strategy_code = None
         if backend_bot_type == 'custom':
             if not request.customPrompt:
-                raise HTTPException(status_code=400, detail="Custom prompt required for custom bot type")
+                raise HTTPException(status_code=400, detail="Custom prompt required for custom minion type")
             
             logger.info(f"Generating custom strategy for prompt: {request.customPrompt[:100]}...")
             try:
@@ -570,26 +582,29 @@ async def buy_bot(request: BotBuyRequest):
                 logger.error(f"Failed to generate custom strategy: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to generate custom strategy: {str(e)}")
         
-        # Deduct cost from user FIRST (before bot creation)
+        # Deduct cost from user FIRST (before minion creation)
         if 'usd' in user_data:
             user_data['usd'] -= request.cost
         if 'usdBalance' in user_data:
             user_data['usdBalance'] -= request.cost
         
-        # Add bot entry to user's bots list
+        # Add minion entry to user's bots list
         if 'bots' not in user_data:
             user_data['bots'] = []
         
-        # Generate temporary bot ID for the entry
+        # Generate temporary minion ID for the entry
         import uuid
         bot_id = str(uuid.uuid4())
         
+        # Use the display name if provided, otherwise fall back to bot type
+        display_name = request.botName if request.botName else backend_bot_type
+        
         user_data['bots'].append({
             'botId': bot_id,
-            'botName': backend_bot_type
+            'botName': display_name
         })
         
-        logger.info(f"After adding bot, user has {len(user_data['bots'])} bots: {user_data['bots']}")
+        logger.info(f"After adding minion, user has {len(user_data['bots'])} minions: {user_data['bots']}")
         logger.info(f"User index: {user_index}, Total players: {len(players)}")
         
         # Update players in Redis FIRST
@@ -602,9 +617,9 @@ async def buy_bot(request: BotBuyRequest):
         # Verify the save worked
         saved_data = r.hget(f"game:{request.gameId}", "players")
         saved_players = json.loads(saved_data) if saved_data else []
-        logger.info(f"After save, Redis has {len(saved_players[0].get('bots', []))} bots for player 0")
+        logger.info(f"After save, Redis has {len(saved_players[0].get('bots', []))} minions for player 0")
         
-        # NOW create the actual bot (this will use the bot_id we generated)
+        # NOW create the actual minion (this will use the bot_id we generated)
         # Call bot_operations directly but pass the bot_id we already created
         from bot import Bot
         bot = Bot(
@@ -615,13 +630,14 @@ async def buy_bot(request: BotBuyRequest):
             bc=0.0,
             bot_type=backend_bot_type,
             user_id=request.userId,
-            custom_strategy_code=custom_strategy_code
+            custom_strategy_code=custom_strategy_code,
+            bot_name=display_name
         )
         
-        # Save bot to Redis
+        # Save minion to Redis
         bot.save_to_redis(request.gameId)
         
-        # Start bot running in a separate thread
+        # Start minion running in a separate thread
         import threading
         bot_thread = threading.Thread(
             target=bot.run,
@@ -631,11 +647,11 @@ async def buy_bot(request: BotBuyRequest):
         )
         bot_thread.start()
         
-        logger.info(f"Bot {bot_id} started for user {request.userId}")
+        logger.info(f"Minion {bot_id} started for user {request.userId}")
         
-        logger.info(f"User {request.userId} purchased bot {bot_id} for ${request.cost}")
+        logger.info(f"User {request.userId} purchased minion {bot_id} for ${request.cost}")
         
-        # Get bot details
+        # Get minion details
         bot = Bot.load_from_redis(request.gameId, bot_id)
         bot_data = bot.to_dict() if bot else {}
         
@@ -651,14 +667,14 @@ async def buy_bot(request: BotBuyRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error buying bot: {e}")
+        logger.error(f"Error buying minion: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.post("/api/bot/toggle")
 async def toggle_bot(request: BotToggleRequest):
     """
-    Toggle a bot on/off.
+    Toggle a minion on/off.
     """
     try:
         success = await asyncio.to_thread(
@@ -668,14 +684,14 @@ async def toggle_bot(request: BotToggleRequest):
         )
         
         if not success:
-            raise HTTPException(status_code=404, detail="Bot not found")
+            raise HTTPException(status_code=404, detail="Minion not found")
         
-        # Get bot details
+        # Get minion details
         bot = Bot.load_from_redis(request.gameId, request.botId)
         if not bot:
-            raise HTTPException(status_code=404, detail="Bot not found after toggle")
+            raise HTTPException(status_code=404, detail="Minion not found after toggle")
         
-        logger.info(f"Bot {request.botId} toggled to {'ON' if bot.is_toggled else 'OFF'}")
+        logger.info(f"Minion {request.botId} toggled to {'ON' if bot.is_toggled else 'OFF'}")
         
         return {
             "success": True,
@@ -687,23 +703,23 @@ async def toggle_bot(request: BotToggleRequest):
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error toggling bot: {e}")
+        logger.error(f"Error toggling minion: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
 @app.get("/api/bot/list/{game_id}/{user_id}")
 async def list_user_bots(game_id: str, user_id: str):
     """
-    List all bots owned by a user in a game.
+    List all minions owned by a user in a game.
     """
     try:
         r = get_redis_connection()
         
-        # Get all bots for the game
+        # Get all minions for the game
         bots_set_key = f"bots:{game_id}"
         bot_ids = r.smembers(bots_set_key)
         
-        # Load user's bots
+        # Load user's minions
         user_bots = []
         for bot_id_bytes in bot_ids:
             bot_id = bot_id_bytes.decode('utf-8') if isinstance(bot_id_bytes, bytes) else bot_id_bytes
@@ -719,7 +735,7 @@ async def list_user_bots(game_id: str, user_id: str):
         }
         
     except Exception as e:
-        logger.error(f"Error listing bots: {e}")
+        logger.error(f"Error listing minions: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 @app.get("/api/game/leaderboard/{game_id}")
@@ -898,9 +914,9 @@ async def root():
             "POST /api/game/buy-coins": "Execute buy trade",
             "POST /api/game/sell-coins": "Execute sell trade",
             "GET /api/game/leaderboard/{game_id}": "Get wealth leaderboard (richest player)",
-            "POST /api/bot/buy": "Purchase a bot",
-            "POST /api/bot/toggle": "Toggle bot on/off",
-            "GET /api/bot/list/{game_id}/{user_id}": "List user's bots",
+            "POST /api/bot/buy": "Purchase a minion",
+            "POST /api/bot/toggle": "Toggle minion on/off",
+            "GET /api/bot/list/{game_id}/{user_id}": "List user's minions",
             "GET /api/transactions/{game_id}": "Get transaction history",
             "GET /api/transactions/{game_id}/user/{user_id}": "Get user's transactions",
             "GET /api/transactions/{game_id}/bots": "Get bot transactions",

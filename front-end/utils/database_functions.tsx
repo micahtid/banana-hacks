@@ -286,57 +286,59 @@ export const sellCoins = async (
 };
 
 /**
- * Buy a bot
+ * Buy a minion
  */
-export const buyBot = async (
-  botPrice: number,
+export const buyMinion = async (
+  minionPrice: number,
   userId: string,
   gameId: string,
-  botType: string,
+  minionType: string,
+  botName?: string,
   customPrompt?: string
 ): Promise<void> => {
   // Validate parameters before sending
-  console.log('[buyBot] Parameters received:', {
-    botPrice,
+  console.log('[buyMinion] Parameters received:', {
+    minionPrice,
     userId,
     gameId,
-    botType,
+    minionType,
     customPrompt: customPrompt ? '(provided)' : '(none)',
     // Type checking
     userIdType: typeof userId,
     gameIdType: typeof gameId,
-    botTypeType: typeof botType
+    minionTypeType: typeof minionType
   });
 
   if (!userId || userId === 'undefined' || userId === 'null') {
-    console.error('[buyBot] Invalid userId:', userId);
+    console.error('[buyMinion] Invalid userId:', userId);
     throw new Error(`userId is required but was not provided (received: ${userId})`);
   }
 
   if (!gameId || gameId === 'undefined' || gameId === 'null') {
-    console.error('[buyBot] Invalid gameId:', gameId);
+    console.error('[buyMinion] Invalid gameId:', gameId);
     throw new Error(`gameId is required but was not provided (received: ${gameId})`);
   }
 
-  if (!botType || botType === 'undefined' || botType === 'null') {
-    console.error('[buyBot] Invalid botType:', botType);
-    throw new Error(`botType is required but was not provided (received: ${botType})`);
+  if (!minionType || minionType === 'undefined' || minionType === 'null') {
+    console.error('[buyMinion] Invalid minionType:', minionType);
+    throw new Error(`minionType is required but was not provided (received: ${minionType})`);
   }
 
-  if (botPrice === undefined || botPrice === null || botPrice <= 0) {
-    console.error('[buyBot] Invalid botPrice:', botPrice);
-    throw new Error(`Invalid botPrice: ${botPrice}`);
+  if (minionPrice === undefined || minionPrice === null || minionPrice <= 0) {
+    console.error('[buyMinion] Invalid minionPrice:', minionPrice);
+    throw new Error(`Invalid minionPrice: ${minionPrice}`);
   }
 
   const requestBody = { 
     gameId, 
     userId, 
-    botType, 
-    cost: botPrice, 
+    botType: minionType,  // Backend still uses 'botType' internally
+    botName: botName,  // Display name for the minion
+    cost: minionPrice, 
     customPrompt 
   };
 
-  console.log('[buyBot] Sending request to /api/bot/buy:', requestBody);
+  console.log('[buyMinion] Sending request to /api/bot/buy:', requestBody);
 
   try {
     const response = await fetch('/api/bot/buy', {
@@ -345,17 +347,17 @@ export const buyBot = async (
       body: JSON.stringify(requestBody),
     });
 
-    console.log('[buyBot] Response status:', response.status);
+    console.log('[buyMinion] Response status:', response.status);
 
     if (!response.ok) {
       let errorData;
       try {
         errorData = await response.json();
-        console.error('[buyBot] Error response:', errorData);
-        console.error('[buyBot] Full error object:', JSON.stringify(errorData, null, 2));
+        console.error('[buyMinion] Error response:', errorData);
+        console.error('[buyMinion] Full error object:', JSON.stringify(errorData, null, 2));
       } catch (e) {
-        console.error('[buyBot] Could not parse error response');
-        throw new Error(`Bot purchase failed with status ${response.status}`);
+        console.error('[buyMinion] Could not parse error response');
+        throw new Error(`Minion purchase failed with status ${response.status}`);
       }
       
       // Handle Pydantic validation errors (FastAPI format)
@@ -375,41 +377,41 @@ export const buyBot = async (
       }
       
       // Fallback to .error field (our custom format)
-      throw new Error(errorData.error || `Failed to buy bot (status ${response.status})`);
+      throw new Error(errorData.error || `Failed to buy minion (status ${response.status})`);
     }
 
     const result = await response.json();
-    console.log('[buyBot] Success:', result);
+    console.log('[buyMinion] Success:', result);
   } catch (error) {
-    console.error('[buyBot] Exception:', error);
+    console.error('[buyMinion] Exception:', error);
     throw error;
   }
 };
 
 /**
- * Toggle bot active/inactive
+ * Toggle minion active/inactive
  */
-export const toggleBot = async (
-  botId: string,
+export const toggleMinion = async (
+  minionId: string,
   userId: string,
   gameId: string
 ): Promise<void> => {
-  console.log('[toggleBot] Request:', { botId, userId, gameId });
+  console.log('[toggleMinion] Request:', { minionId, userId, gameId });
   
   const response = await fetch('/api/bot/toggle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameId, userId, botId }),
+    body: JSON.stringify({ gameId, userId, botId: minionId }),  // Backend still uses 'botId' internally
   });
 
-  console.log('[toggleBot] Response status:', response.status);
+  console.log('[toggleMinion] Response status:', response.status);
 
   if (!response.ok) {
     const error = await response.json();
-    console.error('[toggleBot] Error:', error);
-    throw new Error(error.error || 'Failed to toggle bot');
+    console.error('[toggleMinion] Error:', error);
+    throw new Error(error.error || 'Failed to toggle minion');
   }
 
   const result = await response.json();
-  console.log('[toggleBot] Success:', result);
+  console.log('[toggleMinion] Success:', result);
 };

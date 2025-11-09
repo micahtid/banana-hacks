@@ -9,7 +9,32 @@ interface TransactionsProps {
   currentUser: User;
 }
 
-type FilterType = "all" | "buy" | "sell" | "bot";
+type FilterType = "all" | "buy" | "sell" | "minion";
+
+// Helper function to get display name for a transaction actor
+// Handles both new format (proper names) and old format (backend types)
+function getDisplayName(name: string): string {
+  // If it's a user name or already a display name (has spaces or starts with capital), return as-is
+  if (!name.toLowerCase().includes('bot') || name.includes(' ') || /^[A-Z]/.test(name.replace('Bot_', ''))) {
+    return name;
+  }
+  
+  // For old bot names with format "Bot_12345678" or backend types
+  if (name.startsWith('Bot_')) {
+    // Check if it's just Bot_ID format
+    const afterBot = name.substring(4);
+    if (/^[a-f0-9]{8}$/.test(afterBot)) {
+      // It's an old Bot_ID format, keep as-is for now
+      return name;
+    }
+  }
+  
+  // For backend types like "mean_reversion", convert to user-friendly format
+  return name
+    .split('_')
+    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(' ');
+}
 
 export default function Transactions({ game, currentUser }: TransactionsProps) {
   const [filter, setFilter] = useState<FilterType>("all");
@@ -24,8 +49,8 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
     
     if (filter === "all") return true;
     
-    // Bot filter: check both name field and interactionName for backward compatibility
-    if (filter === "bot") {
+    // Minion filter: check both name field and interactionName for backward compatibility
+    if (filter === "minion") {
       const nameHasBot = interaction.name.toLowerCase().includes("bot");
       const interactionNameHasBot = interaction.interactionName && 
                                     interaction.interactionName.toLowerCase().includes("bot");
@@ -110,17 +135,17 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
             SELLS
           </button>
           <button
-            onClick={() => setFilter("bot")}
+            onClick={() => setFilter("minion")}
             className={`
               font-retro text-lg px-6 py-2 border-2 transition-all
               ${
-                filter === "bot"
+                filter === "minion"
                   ? "bg-[var(--accent)] border-orange-300 text-white"
                   : "bg-transparent border-[var(--border)] text-[var(--foreground)] hover:border-[var(--accent)]"
               }
             `}
           >
-            BOT TRADES
+            MINION TRADES
           </button>
         </div>
       </Card>
@@ -145,8 +170,8 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
               if (!interaction.name || !interaction.type) return null;
               
               const isCurrentUser = interaction.name === currentUser.userName;
-              // Check for bot: case-insensitive check on both name and interactionName
-              const isBot = interaction.name.toLowerCase().includes("bot") ||
+              // Check for minion: case-insensitive check on both name and interactionName
+              const isMinion = interaction.name.toLowerCase().includes("bot") ||
                            (interaction.interactionName && interaction.interactionName.toLowerCase().includes("bot"));
 
               return (
@@ -166,16 +191,16 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="font-retro text-lg text-[var(--primary-light)]">
-                          {interaction.name}
+                          {getDisplayName(interaction.name)}
                         </span>
                         {isCurrentUser && (
                           <span className="text-xs bg-[var(--primary)] text-[var(--background)] px-2 py-1 font-bold">
                             YOU
                           </span>
                         )}
-                        {isBot && (
+                        {isMinion && (
                           <span className="text-xs bg-[var(--accent)] text-white px-2 py-1 font-bold">
-                            BOT
+                            MINION
                           </span>
                         )}
                       </div>
@@ -224,7 +249,7 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
 
         <Card padding="lg">
           <div className="text-center">
-            <div className="text-sm text-[var(--foreground)] mb-1">Bot Trades</div>
+            <div className="text-sm text-[var(--foreground)] mb-1">Minion Trades</div>
             <div className="font-retro text-2xl text-[var(--accent)]">
               {interactions.filter((i) => 
                 (i.name && i.name.toLowerCase().includes("bot")) ||
