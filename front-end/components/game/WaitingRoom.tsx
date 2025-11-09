@@ -47,11 +47,11 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
           <p className="text-[var(--foreground)] mb-3 text-center">
             Share this Game ID with other players:
           </p>
-          <div className="flex items-center gap-3">
-            <div className="flex-1 p-3 bg-[var(--background)] border-2 border-[var(--border)] font-mono text-[var(--primary)] text-center">
+          <div className="flex items-stretch gap-3">
+            <div className="flex-1 p-3 bg-[var(--background)] border-2 border-[var(--border)] font-mono text-[var(--primary)] text-center flex items-center justify-center">
               {game.gameId}
             </div>
-            <Button onClick={copyGameId} variant="primary">
+            <Button onClick={copyGameId} variant="primary" className="px-6">
               Copy
             </Button>
           </div>
