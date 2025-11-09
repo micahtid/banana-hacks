@@ -17,11 +17,22 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
   // Get all interactions/transactions
   const interactions = game.interactions || [];
 
-  // Filter interactions
+  // Filter interactions (with defensive checks)
   const filteredInteractions = interactions.filter((interaction) => {
+    // Defensive: skip interactions without name field
+    if (!interaction.name) return false;
+    
     if (filter === "all") return true;
-    if (filter === "bot") return interaction.name.includes("Bot");
-    return interaction.type.toLowerCase() === filter;
+    
+    // Bot filter: check both name field and interactionName for backward compatibility
+    if (filter === "bot") {
+      const nameHasBot = interaction.name.toLowerCase().includes("bot");
+      const interactionNameHasBot = interaction.interactionName && 
+                                    interaction.interactionName.toLowerCase().includes("bot");
+      return nameHasBot || interactionNameHasBot;
+    }
+    
+    return interaction.type && interaction.type.toLowerCase() === filter;
   });
 
   // Sort by most recent (if we had timestamps, we'd sort by those)
@@ -130,8 +141,13 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
         ) : (
           <div className="space-y-3">
             {sortedInteractions.map((interaction, index) => {
+              // Defensive checks - skip malformed interactions
+              if (!interaction.name || !interaction.type) return null;
+              
               const isCurrentUser = interaction.name === currentUser.userName;
-              const isBot = interaction.name.includes("Bot");
+              // Check for bot: case-insensitive check on both name and interactionName
+              const isBot = interaction.name.toLowerCase().includes("bot") ||
+                           (interaction.interactionName && interaction.interactionName.toLowerCase().includes("bot"));
 
               return (
                 <div
@@ -171,7 +187,7 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
                     {/* Right: Transaction Details */}
                     <div className="text-right">
                       <div className="font-retro text-2xl text-[var(--primary)]">
-                        {Math.abs(interaction.value).toFixed(2)} BC
+                        {interaction.value ? Math.abs(interaction.value).toFixed(2) : "0.00"} BC
                       </div>
                       <div className="text-xs text-[var(--foreground)]">
                         {/* Mock timestamp - in real implementation, use actual timestamp */}
@@ -192,7 +208,7 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
           <div className="text-center">
             <div className="text-sm text-[var(--foreground)] mb-1">Total Buys</div>
             <div className="font-retro text-2xl text-[var(--success)]">
-              {interactions.filter((i) => i.type.toLowerCase() === "buy").length}
+              {interactions.filter((i) => i.type && i.type.toLowerCase() === "buy").length}
             </div>
           </div>
         </Card>
@@ -201,7 +217,7 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
           <div className="text-center">
             <div className="text-sm text-[var(--foreground)] mb-1">Total Sells</div>
             <div className="font-retro text-2xl text-[var(--danger)]">
-              {interactions.filter((i) => i.type.toLowerCase() === "sell").length}
+              {interactions.filter((i) => i.type && i.type.toLowerCase() === "sell").length}
             </div>
           </div>
         </Card>
@@ -210,7 +226,10 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
           <div className="text-center">
             <div className="text-sm text-[var(--foreground)] mb-1">Bot Trades</div>
             <div className="font-retro text-2xl text-[var(--accent)]">
-              {interactions.filter((i) => i.name.includes("Bot")).length}
+              {interactions.filter((i) => 
+                (i.name && i.name.toLowerCase().includes("bot")) ||
+                (i.interactionName && i.interactionName.toLowerCase().includes("bot"))
+              ).length}
             </div>
           </div>
         </Card>

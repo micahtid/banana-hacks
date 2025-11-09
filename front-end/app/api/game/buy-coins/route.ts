@@ -81,10 +81,16 @@ export async function POST(request: NextRequest) {
     await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));
 
     // Track the interaction
-    const interactions = JSON.parse(gameData.interactions || '[]');
+    // ⚠️ CRITICAL: Re-read interactions from Redis to avoid race condition with bot trades
+    const freshGameData = await redis.hget(`game:${gameId}`, 'interactions');
+    const interactions = JSON.parse(freshGameData || '[]');
+    const playerName = player.playerName || player.userName;
     interactions.push({
-      interactionName: 'Buy Coins',
-      interactionDescription: `${player.playerName || player.userName} bought ${amount} BC for $${totalCost.toFixed(2)}`
+      name: playerName,  // Required for front-end
+      type: 'buy',       // Required for front-end
+      value: Math.round(amount * 100),  // Amount in cents
+      interactionName: playerName,
+      interactionDescription: `${playerName} bought ${amount} BC for $${totalCost.toFixed(2)}`
     });
     await redis.hset(`game:${gameId}`, 'interactions', JSON.stringify(interactions));
 

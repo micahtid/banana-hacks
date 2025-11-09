@@ -68,7 +68,7 @@ function CreateRoomContent() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center p-8">
+    <div className="flex min-h-screen items-center justify-center p-8 bg-[var(--background)]">
       <div className="flex w-full max-w-md flex-col gap-6">
         {/* Title */}
         <div className="text-center">
@@ -126,7 +126,7 @@ function CreateRoomContent() {
             <Button
               onClick={() => router.push("/")}
               variant="secondary"
-              size="sm"
+              size="lg"
               fullWidth
               disabled={isCreating}
             >
