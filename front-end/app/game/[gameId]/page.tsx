@@ -17,12 +17,22 @@ export default function GamePage() {
   const [game, setGame] = useState<Game | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [showCountdown, setShowCountdown] = useState(false);
+  const [countdownNumber, setCountdownNumber] = useState(3);
+  const [wasStarted, setWasStarted] = useState(false);
+  const [isFadingOut, setIsFadingOut] = useState(false);
 
   useEffect(() => {
     if (!gameId) return;
 
     const unsubscribe = getRoom(gameId, (gameData) => {
       if (gameData) {
+        // Detect when game transitions from not started to started
+        if (!wasStarted && gameData.isStarted) {
+          setWasStarted(true);
+          setShowCountdown(true);
+          setCountdownNumber(3);
+        }
         setGame(gameData);
         setError("");
       } else {
@@ -32,7 +42,31 @@ export default function GamePage() {
     });
 
     return () => unsubscribe();
-  }, [gameId]);
+  }, [gameId, wasStarted]);
+
+  // Countdown effect
+  useEffect(() => {
+    if (!showCountdown) return;
+
+    if (countdownNumber === 0) {
+      // Show "SPLIT!" for 1 second, then start fade out
+      const timer = setTimeout(() => {
+        setIsFadingOut(true);
+        // Hide completely after fade animation (500ms)
+        setTimeout(() => {
+          setShowCountdown(false);
+          setIsFadingOut(false);
+        }, 500);
+      }, 1000);
+      return () => clearTimeout(timer);
+    }
+
+    const timer = setTimeout(() => {
+      setCountdownNumber(countdownNumber - 1);
+    }, 1000);
+
+    return () => clearTimeout(timer);
+  }, [showCountdown, countdownNumber]);
 
   if (user === undefined || loading) {
     return (
@@ -122,6 +156,24 @@ export default function GamePage() {
         <WaitingRoom game={game} currentUser={currentUser} />
       ) : (
         <GameDashboard game={game} currentUser={currentUser} />
+      )}
+
+      {/* Countdown Overlay */}
+      {showCountdown && (
+        <div
+          className={`fixed inset-0 bg-black bg-opacity-80 flex items-center justify-center z-50 transition-opacity duration-500 ${
+            isFadingOut ? 'opacity-0' : 'opacity-100'
+          }`}
+        >
+          <div className="text-center">
+            <div
+              key={countdownNumber}
+              className="font-retro text-9xl text-[var(--primary-light)] animate-bounce"
+            >
+              {countdownNumber === 0 ? "SPLIT!" : countdownNumber}
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
