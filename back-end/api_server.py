@@ -198,7 +198,8 @@ async def start_market_updates(request: GameStartRequest):
             # Create new market
             market = Market(
                 initial_price=request.initialPrice,
-                game_id=game_id
+                game_id=game_id,
+                duration=request.duration
             )
             market.dollar_supply = request.totalUsd
             market.bc_supply = request.totalBc
@@ -300,7 +301,11 @@ async def get_market_status(game_id: str):
             "volatility": market.market_data.volatility,
             "dollarSupply": market.dollar_supply,
             "bcSupply": market.bc_supply,
-            "priceHistoryLength": len(market.market_data.price_history)
+            "priceHistoryLength": len(market.market_data.price_history),
+            "eventTick": market.event_tick,
+            "eventTime": market.event_time.isoformat(),
+            "eventTitle": market.event_title,
+            "eventTriggered": market.event_triggered
         })
     
     return response
@@ -327,7 +332,11 @@ async def get_market_data(game_id: str, history_limit: int = 100):
         "dollarSupply": market.dollar_supply,
         "bcSupply": market.bc_supply,
         "priceHistory": price_history,
-        "startTime": market.start_time.isoformat()
+        "startTime": market.start_time.isoformat(),
+        "eventTick": market.event_tick,
+        "eventTime": market.event_time.isoformat(),
+        "eventTitle": market.event_title,
+        "eventTriggered": market.event_triggered
     }
 
 

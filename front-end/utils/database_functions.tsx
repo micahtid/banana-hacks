@@ -96,6 +96,8 @@ export interface Game {
   durationMinutes: number;
   maxPlayers: number;
   eventTime: Date;
+  eventTitle?: string;
+  eventTriggered?: boolean;
 
   players: Player[];
 
