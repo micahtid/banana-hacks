@@ -16,9 +16,10 @@ from datetime import datetime
 from market import Market, MarketData
 from user import User
 from wallet import UserWallet
-from bot import Bot
+from bot import Bot, generate_custom_bot_strategy
 from bot_operations import buyBot, toggleBot
 from redis_helper import get_redis_connection
+from transaction_history import TransactionHistory
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -377,9 +378,21 @@ async def buy_coins(request: TradeRequest):
         players[user_index] = user_data
         r.hset(f"game:{request.gameId}", "players", json.dumps(players))
         
-        # Update interactions counter
-        interactions = int(game_data.get('interactions', 0))
-        r.hset(f"game:{request.gameId}", "interactions", interactions + 1)
+        # NOTE: Removed interactions counter - using TransactionHistory instead
+        # ⚠️ DO NOT write to 'interactions' field here - it's now an ARRAY maintained by TransactionHistory
+        # The old code was overwriting the array with an integer, destroying all transaction history!
+        
+        # Record transaction in history
+        TransactionHistory.add_transaction(request.gameId, {
+            'type': 'buy',
+            'actor': request.userId,
+            'actor_name': user_data.get('userName', user_data.get('playerName', 'Unknown')),
+            'amount': request.amount,
+            'price': current_price,
+            'total_cost': cost,
+            'timestamp': datetime.now().isoformat(),
+            'is_bot': False
+        })
         
         logger.info(f"User {request.userId} bought {request.amount} BC for ${cost:.2f}")
         
@@ -459,9 +472,21 @@ async def sell_coins(request: TradeRequest):
         players[user_index] = user_data
         r.hset(f"game:{request.gameId}", "players", json.dumps(players))
         
-        # Update interactions counter
-        interactions = int(game_data.get('interactions', 0))
-        r.hset(f"game:{request.gameId}", "interactions", interactions + 1)
+        # NOTE: Removed interactions counter - using TransactionHistory instead
+        # ⚠️ DO NOT write to 'interactions' field here - it's now an ARRAY maintained by TransactionHistory
+        # The old code was overwriting the array with an integer, destroying all transaction history!
+        
+        # Record transaction in history
+        TransactionHistory.add_transaction(request.gameId, {
+            'type': 'sell',
+            'actor': request.userId,
+            'actor_name': user_data.get('userName', user_data.get('playerName', 'Unknown')),
+            'amount': request.amount,
+            'price': current_price,
+            'total_cost': revenue,
+            'timestamp': datetime.now().isoformat(),
+            'is_bot': False
+        })
         
         logger.info(f"User {request.userId} sold {request.amount} BC for ${revenue:.2f}")
         
@@ -520,7 +545,7 @@ async def buy_bot(request: BotBuyRequest):
         # Map front-end bot types to backend bot types
         bot_type_map = {
             'premade': 'random',
-            'custom': 'random',
+            'custom': 'custom',
             'hodler': 'mean_reversion',
             'scalper': 'momentum',
             'swing': 'momentum',
@@ -530,6 +555,20 @@ async def buy_bot(request: BotBuyRequest):
         }
         
         backend_bot_type = bot_type_map.get(request.botType, 'random')
+        
+        # Generate custom strategy code if bot type is custom
+        custom_strategy_code = None
+        if backend_bot_type == 'custom':
+            if not request.customPrompt:
+                raise HTTPException(status_code=400, detail="Custom prompt required for custom bot type")
+            
+            logger.info(f"Generating custom strategy for prompt: {request.customPrompt[:100]}...")
+            try:
+                custom_strategy_code = generate_custom_bot_strategy(request.customPrompt)
+                logger.info(f"Generated custom strategy code ({len(custom_strategy_code)} chars)")
+            except Exception as e:
+                logger.error(f"Failed to generate custom strategy: {e}")
+                raise HTTPException(status_code=500, detail=f"Failed to generate custom strategy: {str(e)}")
         
         # Deduct cost from user FIRST (before bot creation)
         if 'usd' in user_data:
@@ -575,7 +614,8 @@ async def buy_bot(request: BotBuyRequest):
             usd=request.cost * 0.2,
             bc=0.0,
             bot_type=backend_bot_type,
-            user_id=request.userId
+            user_id=request.userId,
+            custom_strategy_code=custom_strategy_code
         )
         
         # Save bot to Redis
@@ -750,6 +790,84 @@ async def get_wealth_leaderboard(game_id: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.get("/api/transactions/{game_id}")
+async def get_transactions(game_id: str, limit: int = 100, offset: int = 0):
+    """
+    Get transaction history for a game.
+    """
+    try:
+        transactions = TransactionHistory.get_transactions(game_id, limit=limit, offset=offset)
+        stats = TransactionHistory.get_transaction_stats(game_id)
+        
+        return {
+            "success": True,
+            "gameId": game_id,
+            "transactions": transactions,
+            "stats": stats,
+            "count": len(transactions)
+        }
+    except Exception as e:
+        logger.error(f"Error getting transactions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/transactions/{game_id}/user/{user_id}")
+async def get_user_transactions(game_id: str, user_id: str, limit: int = 100):
+    """
+    Get transaction history for a specific user in a game.
+    """
+    try:
+        transactions = TransactionHistory.get_user_transactions(game_id, user_id, limit=limit)
+        
+        return {
+            "success": True,
+            "gameId": game_id,
+            "userId": user_id,
+            "transactions": transactions,
+            "count": len(transactions)
+        }
+    except Exception as e:
+        logger.error(f"Error getting user transactions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/transactions/{game_id}/bots")
+async def get_bot_transactions(game_id: str, limit: int = 100):
+    """
+    Get all bot transactions for a game.
+    """
+    try:
+        transactions = TransactionHistory.get_bot_transactions(game_id, limit=limit)
+        
+        return {
+            "success": True,
+            "gameId": game_id,
+            "transactions": transactions,
+            "count": len(transactions)
+        }
+    except Exception as e:
+        logger.error(f"Error getting bot transactions: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/transactions/{game_id}/stats")
+async def get_transaction_stats(game_id: str):
+    """
+    Get transaction statistics for a game.
+    """
+    try:
+        stats = TransactionHistory.get_transaction_stats(game_id)
+        
+        return {
+            "success": True,
+            "gameId": game_id,
+            "stats": stats
+        }
+    except Exception as e:
+        logger.error(f"Error getting transaction stats: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 async def health_check():
     """
@@ -783,6 +901,10 @@ async def root():
             "POST /api/bot/buy": "Purchase a bot",
             "POST /api/bot/toggle": "Toggle bot on/off",
             "GET /api/bot/list/{game_id}/{user_id}": "List user's bots",
+            "GET /api/transactions/{game_id}": "Get transaction history",
+            "GET /api/transactions/{game_id}/user/{user_id}": "Get user's transactions",
+            "GET /api/transactions/{game_id}/bots": "Get bot transactions",
+            "GET /api/transactions/{game_id}/stats": "Get transaction statistics",
             "GET /health": "Health check"
         }
     }

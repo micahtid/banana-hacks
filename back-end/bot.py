@@ -4,7 +4,151 @@ from typing import List, Dict, Optional
 from dataclasses import dataclass
 import uuid
 import json
+import re
+import os
 from redis_helper import get_redis_connection
+from google import genai
+from google.genai import types
+from dotenv import load_dotenv
+
+# Load environment variables
+load_dotenv()
+
+
+# ============================================================================
+# GEMINI STRATEGY GENERATOR
+# ============================================================================
+
+def generate_custom_bot_strategy(user_prompt: str) -> str:
+    """
+    Use Gemini 2.5 Pro to generate a custom trading strategy function based on user's prompt.
+    
+    Args:
+        user_prompt: User's description of the trading strategy they want
+        
+    Returns:
+        String containing executable Python code that implements the strategy.
+        The code should define a function that takes coins (list of prices) and 
+        current_price (float) as parameters and returns {'action': action, 'amount': amount}
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        raise ValueError("GEMINI_API_KEY environment variable not set")
+    
+    client = genai.Client(api_key=api_key)
+    
+    system_prompt = """You are an expert Python developer creating trading bot strategies.
+Generate ONLY executable Python code with NO explanations, NO markdown formatting, NO code fences.
+
+The code must:
+1. Define a function named 'custom_strategy' that takes two parameters:
+   - coins: List[float] - historical price data
+   - current_price: float - current coin price
+2. Return a dictionary with two keys:
+   - 'action': str - must be 'buy', 'sell', or 'hold'
+   - 'amount': float - amount of coins to trade (0 for hold)
+3. DO NOT include import statements - math and random modules are already available
+4. Be safe to execute (no file I/O, no network calls, no system commands)
+5. Handle edge cases (empty list, single price, etc.)
+6. Use reasonable trading amounts (0.5 to 5.0 coins)
+7. ALWAYS return a valid dictionary - never return None
+
+Example structure:
+def custom_strategy(coins, current_price):
+    if len(coins) < 2:
+        return {'action': 'hold', 'amount': 0.0}
+    # Use math.sqrt(), random.random(), etc. directly - no imports needed
+    avg = sum(coins) / len(coins)
+    if current_price > avg * 1.05:
+        return {'action': 'buy', 'amount': 2.0}
+    return {'action': 'hold', 'amount': 0.0}
+"""
+    
+    user_request = f"""Create a trading bot strategy based on this description:
+{user_prompt}
+
+Remember: Output ONLY the Python code, nothing else."""
+    
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-exp",
+            contents=user_request,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                temperature=0.7,
+                max_output_tokens=1000,
+            )
+        )
+        
+        code = response.text.strip()
+        
+        # Remove markdown code fences if present
+        if code.startswith("```python"):
+            code = code[9:]
+        elif code.startswith("```"):
+            code = code[3:]
+        if code.endswith("```"):
+            code = code[:-3]
+        
+        code = code.strip()
+        
+        # Validate the code has the required function
+        if "def custom_strategy" not in code:
+            raise ValueError("Generated code does not contain 'custom_strategy' function")
+        
+        # Test the generated code to ensure it returns valid results
+        try:
+            test_globals = {
+                '__builtins__': {
+                    'len': len, 'sum': sum, 'abs': abs, 'min': min, 'max': max,
+                    'range': range, 'float': float, 'int': int, 'str': str,
+                    'bool': bool, 'list': list, 'dict': dict, 'enumerate': enumerate,
+                    'zip': zip, 'True': True, 'False': False, 'None': None,
+                },
+                'math': math,
+                'random': random,
+            }
+            exec(code, test_globals)
+            
+            if 'custom_strategy' not in test_globals:
+                raise ValueError("Function not defined after execution")
+            
+            # Test with sample data
+            test_result = test_globals['custom_strategy']([1.0, 1.1, 1.05], 1.08)
+            
+            # Validate the result
+            if not isinstance(test_result, dict):
+                raise ValueError(f"Strategy returned {type(test_result)}, expected dict")
+            
+            if 'action' not in test_result or 'amount' not in test_result:
+                raise ValueError(f"Strategy missing required keys. Got: {test_result.keys()}")
+            
+            if test_result['action'] not in ['buy', 'sell', 'hold']:
+                raise ValueError(f"Invalid action: {test_result['action']}")
+            
+            if test_result is None:
+                raise ValueError("Strategy returned None")
+            
+            print(f"Custom strategy validated successfully. Test result: {test_result}")
+            
+        except Exception as e:
+            print(f"Generated code failed validation: {e}")
+            raise ValueError(f"Generated code failed validation: {e}")
+        
+        return code
+        
+    except Exception as e:
+        print(f"Error generating custom bot strategy: {e}")
+        # Return a safe default strategy
+        return """def custom_strategy(coins, current_price):
+    if len(coins) < 2:
+        return {'action': 'hold', 'amount': 0.0}
+    if random.random() > 0.5:
+        return {'action': 'buy', 'amount': 1.0}
+    else:
+        return {'action': 'sell', 'amount': 1.0}
+"""
+
 
 # ============================================================================
 # BOT CLASS
@@ -19,7 +163,8 @@ class Bot:
     def __init__(self, bot_id: Optional[str] = None,
                  is_toggled: bool = True, usd_given: float = 0.0,
                  usd: float = 0.0, bc: float = 0.0, bot_type: Optional[str] = None,
-                 behavior_coefficient: Optional[float] = None, user_id: Optional[str] = None):
+                 behavior_coefficient: Optional[float] = None, user_id: Optional[str] = None,
+                 custom_strategy_code: Optional[str] = None):
         """
         Initialize a bot
         
@@ -29,9 +174,10 @@ class Bot:
             usd_given: Initial USD capital given to the bot (startingBalance in Redis)
             usd: Current USD balance in bot's wallet (balance in Redis)
             bc: Current BC (Banana Coin) balance in bot's wallet (not in Redis structure, but needed for trading)
-            bot_type: Type of bot strategy (random, momentum, mean_reversion, market_maker, hedger)
+            bot_type: Type of bot strategy (random, momentum, mean_reversion, market_maker, hedger, custom)
             behavior_coefficient: Bot's behavior coefficient (0.8-1.2). If None, generated from bot_id
             user_id: Owner user ID
+            custom_strategy_code: Python code for custom strategy (only used when bot_type='custom')
         """
         self.bot_id = bot_id or str(uuid.uuid4())
         self.is_toggled = is_toggled
@@ -40,6 +186,7 @@ class Bot:
         self.bc = bc
         self.bot_type = bot_type or 'random'
         self.user_id = user_id
+        self.custom_strategy_code = custom_strategy_code
         self.parameters = self._get_default_parameters()
         
         # Bot-specific randomness seed based on bot_id for consistent uniqueness
@@ -117,6 +264,8 @@ class Bot:
             return self._analyze_market_maker(current_price)
         elif self.bot_type == 'hedger':
             return self._analyze_hedger(coins, current_price)
+        elif self.bot_type == 'custom':
+            return self._analyze_custom(coins, current_price)
         else:
             return {'action': 'hold', 'amount': 0.0}
     
@@ -300,6 +449,93 @@ class Bot:
         
         return {'action': 'hold', 'amount': 0.0}
     
+    def _analyze_custom(self, coins: List[float], current_price: float) -> Dict:
+        """
+        Execute custom strategy generated by Gemini LLM.
+        
+        Args:
+            coins: List of historical coin prices
+            current_price: Current coin price
+            
+        Returns:
+            Dict with 'action' and 'amount' keys
+        """
+        if not self.custom_strategy_code:
+            print(f"Warning: Bot {self.bot_id} has no custom strategy code, defaulting to hold")
+            return {'action': 'hold', 'amount': 0.0}
+        
+        try:
+            # Create a safe execution environment with pre-imported modules
+            # This avoids the need for __import__ in user code
+            safe_globals = {
+                '__builtins__': {
+                    'len': len,
+                    'sum': sum,
+                    'abs': abs,
+                    'min': min,
+                    'max': max,
+                    'range': range,
+                    'float': float,
+                    'int': int,
+                    'str': str,
+                    'bool': bool,
+                    'list': list,
+                    'dict': dict,
+                    'enumerate': enumerate,
+                    'zip': zip,
+                    'True': True,
+                    'False': False,
+                    'None': None,
+                },
+                'math': math,
+                'random': random,
+            }
+            
+            # Execute the custom strategy code to define the function
+            exec(self.custom_strategy_code, safe_globals)
+            
+            # Check if the custom_strategy function was defined
+            if 'custom_strategy' not in safe_globals:
+                print(f"Error: custom_strategy function not found in generated code")
+                return {'action': 'hold', 'amount': 0.0}
+            
+            # Call the custom strategy function
+            result = safe_globals['custom_strategy'](coins, current_price)
+            
+            # Validate result format
+            if not isinstance(result, dict):
+                print(f"Error: custom_strategy returned non-dict: {type(result)}")
+                return {'action': 'hold', 'amount': 0.0}
+            
+            if 'action' not in result or 'amount' not in result:
+                print(f"Error: custom_strategy missing required keys: {result.keys()}")
+                return {'action': 'hold', 'amount': 0.0}
+            
+            # Validate action
+            action = result['action']
+            if action not in ['buy', 'sell', 'hold']:
+                print(f"Error: invalid action '{action}', defaulting to hold")
+                return {'action': 'hold', 'amount': 0.0}
+            
+            # Validate and clamp amount
+            try:
+                amount = float(result['amount'])
+                if amount < 0:
+                    amount = 0.0
+                # Clamp to reasonable range
+                amount = min(max(amount, 0.0), 10.0)
+            except (ValueError, TypeError):
+                print(f"Error: invalid amount '{result['amount']}'")
+                return {'action': 'hold', 'amount': 0.0}
+            
+            return {'action': action, 'amount': amount}
+            
+        except Exception as e:
+            print(f"Error executing custom strategy for bot {self.bot_id}: {e}")
+            import traceback
+            traceback.print_exc()
+            return {'action': 'hold', 'amount': 0.0}
+    
     def buy(self, amount: float, price: float, game_data: Dict, user_id: Optional[str] = None) -> bool:
         """
         Execute buy trade
@@ -313,6 +549,9 @@ class Bot:
         Returns:
             True if successful, False otherwise
         """
+        from transaction_history import TransactionHistory
+        from datetime import datetime
+        
         cost = amount * price
         
         # Check if bot has enough USD
@@ -346,15 +585,25 @@ class Bot:
                         player['usdBalance'] = player.get('usdBalance', 0.0) - cost
                     break
         
-        # Append to interactions
-        if 'interactions' not in game_data:
-            game_data['interactions'] = []
+        # Get game_id from game_data (need to extract it)
+        game_id = game_data.get('gameId', '')
+        if not game_id and hasattr(self, '_current_game_id'):
+            game_id = self._current_game_id
         
-        game_data['interactions'].append({
-            'name': f'Bot_{self.bot_id[:8]}',
-            'type': 'buy',
-            'value': int(amount * 100)  # Store as integer (cents equivalent)
-        })
+        # Record transaction in history
+        if game_id:
+            TransactionHistory.add_transaction(game_id, {
+                'type': 'buy',
+                'actor': self.bot_id,
+                'actor_name': f'Bot_{self.bot_id[:8]}',
+                'amount': amount,
+                'price': price,
+                'total_cost': cost,
+                'timestamp': datetime.now().isoformat(),
+                'is_bot': True,
+                'bot_type': self.bot_type,
+                'user_id': user_id
+            })
         
         return True
     
@@ -371,6 +620,9 @@ class Bot:
         Returns:
             True if successful, False otherwise
         """
+        from transaction_history import TransactionHistory
+        from datetime import datetime
+        
         # Check if bot has enough BC
         if self.bc < amount:
             return False
@@ -404,15 +656,25 @@ class Bot:
                         player['usdBalance'] = player.get('usdBalance', 0.0) + revenue
                     break
         
-        # Append to interactions
-        if 'interactions' not in game_data:
-            game_data['interactions'] = []
+        # Get game_id from game_data (need to extract it)
+        game_id = game_data.get('gameId', '')
+        if not game_id and hasattr(self, '_current_game_id'):
+            game_id = self._current_game_id
         
-        game_data['interactions'].append({
-            'name': f'Bot_{self.bot_id[:8]}',
-            'type': 'sell',
-            'value': int(amount * 100)  # Store as integer (cents equivalent)
-        })
+        # Record transaction in history
+        if game_id:
+            TransactionHistory.add_transaction(game_id, {
+                'type': 'sell',
+                'actor': self.bot_id,
+                'actor_name': f'Bot_{self.bot_id[:8]}',
+                'amount': amount,
+                'price': price,
+                'total_cost': revenue,
+                'timestamp': datetime.now().isoformat(),
+                'is_bot': True,
+                'bot_type': self.bot_type,
+                'user_id': user_id
+            })
         
         return True
     
@@ -431,7 +693,8 @@ class Bot:
                 'bot_type': self.bot_type,
                 'behavior_coefficient': str(self.behavior_coefficient),
                 'parameters': json.dumps(self.parameters),
-                'user_id': self.user_id or ''
+                'user_id': self.user_id or '',
+                'custom_strategy_code': self.custom_strategy_code or ''
             }
             r.hset(bot_key, mapping=bot_data)
             
@@ -473,6 +736,10 @@ class Bot:
                 except (json.JSONDecodeError, TypeError):
                     parameters = {}
             
+            custom_strategy_code = bot_data.get('custom_strategy_code', '')
+            if not custom_strategy_code:
+                custom_strategy_code = None
+            
             bot = cls(
                 bot_id=bot_data.get('bot_id', bot_id),
                 is_toggled=is_toggled,
@@ -481,7 +748,8 @@ class Bot:
                 bc=float(bot_data.get('bc', 0)),
                 bot_type=bot_data.get('bot_type', 'random'),
                 behavior_coefficient=behavior_coefficient,
-                user_id=bot_data.get('user_id', '')
+                user_id=bot_data.get('user_id', ''),
+                custom_strategy_code=custom_strategy_code
             )
             bot.parameters = parameters
             
@@ -517,31 +785,41 @@ class Bot:
         import time
         
         print(f"Bot {self.bot_id} started running in game {game_id}")
+        last_trade_time = 0
+        iteration_count = 0
         
         while True:
             try:
-                # Reload toggle state from Redis every iteration
+                current_time = time.time()
+                
+                # Only check every update_interval seconds
+                if current_time - last_trade_time < update_interval:
+                    time.sleep(0.1)  # Short sleep to avoid busy waiting
+                    continue
+                
+                last_trade_time = current_time
+                iteration_count += 1
+                
+                # Reload toggle state from Redis
                 r = get_redis_connection()
                 bot_key = f"bot:{game_id}:{self.bot_id}"
-                if r.exists(bot_key):
-                    bot_data = r.hgetall(bot_key)
-                    # Python stores True/False, Redis returns as string "True" or "False"
-                    is_toggled_str = bot_data.get('is_toggled', 'True')
-                    self.is_toggled = (is_toggled_str == 'True' or is_toggled_str == 'true' or is_toggled_str == '1')
-                    
-                    if not self.is_toggled:
-                        # Bot is OFF - sleep and continue checking
-                        time.sleep(update_interval)
-                        continue
-                else:
+                if not r.exists(bot_key):
                     # Bot removed, exit
                     print(f"Bot {self.bot_id} removed, stopping")
                     break
                 
+                bot_data = r.hgetall(bot_key)
+                # Python stores True/False, Redis returns as string "True" or "False"
+                is_toggled_str = bot_data.get('is_toggled', 'True')
+                self.is_toggled = (is_toggled_str == 'True' or is_toggled_str == 'true' or is_toggled_str == '1')
+                
+                if not self.is_toggled:
+                    # Bot is OFF - continue checking without trading
+                    continue
+                
                 # Get real-time access to coins (price history)
                 coins = self._get_coins_from_redis(game_id)
                 if not coins:
-                    time.sleep(update_interval)
                     continue
                 
                 current_price = coins[-1] if coins else 1.0
@@ -569,18 +847,16 @@ class Bot:
                             
                             print(f"Bot {self.bot_id} executed {decision['action']} of {decision['amount']} BC at {current_price}")
                 
-                # Update coin value (this happens automatically via market updates,
-                # but we ensure bot state is saved)
-                self.save_to_redis(game_id)
-                
-                # Sleep before next iteration
-                time.sleep(update_interval)
+                # Periodically save bot state (every 5 iterations to reduce Redis writes)
+                if iteration_count % 5 == 0:
+                    self.save_to_redis(game_id)
                 
             except Exception as e:
                 print(f"Error in Bot.run() for {self.bot_id}: {e}")
                 import traceback
                 traceback.print_exc()
-                time.sleep(update_interval)
+                # Short sleep on error to avoid rapid error loops
+                time.sleep(0.5)
     
     def _get_coins_from_redis(self, game_id: str) -> List[float]:
         """

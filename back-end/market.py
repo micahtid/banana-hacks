@@ -6,7 +6,6 @@ from dataclasses import dataclass, field
 import uuid
 import json
 from redis_helper import get_redis_connection, serialize_datetime, deserialize_datetime
-from bot import Bot
 
 @dataclass
 class MarketData:
@@ -76,21 +75,12 @@ class MarketData:
 class Market:
     """Market manager that handles users and market updates"""
     
-    def __init__(self, initial_price: float = 1.0, game_id: Optional[str] = None, 
-                 initial_usd_per_participant: float = 10000.0):
-        """
-        Initialize the market with starting price
-        
-        Args:
-            initial_price: Starting price for BC
-            game_id: Game ID (auto-generated if None)
-            initial_usd_per_participant: Initial USD balance for each bot and user (default: 10000)
-        """
+    def __init__(self, initial_price: float = 1.0, game_id: Optional[str] = None):
+        """Initialize the market with starting price"""
         self.game_id = game_id or str(uuid.uuid4())
         self.start_time = datetime.now()
         self.current_tick = 0
         self.users: List[str] = []
-        self.initial_usd_per_participant = initial_usd_per_participant
         self.dollar_supply = 1000000
         self.bc_supply = 1000000
         
@@ -105,47 +95,8 @@ class Market:
             bc_supply=self.bc_supply
         )
         
-        # Create 20 bots with different strategies
-        self.bots: List[Bot] = []
-        self._create_market_bots()
-        
         # Save initial state to Redis
         self.save_to_redis()
-    
-    def _create_market_bots(self):
-        """
-        Create 20 bots distributed across all bot types.
-        Each bot gets equal initial USD balance (accounting for users).
-        """
-        bot_types = ['random', 'momentum', 'mean_reversion', 'market_maker', 'hedger']
-        num_bots = 20
-        bots_per_type = num_bots // len(bot_types)  # 4 bots per type
-        remaining = num_bots % len(bot_types)  # 0 remaining for 20 bots
-        
-        # Create list of bot types (4 of each type)
-        bot_type_list = []
-        for bot_type in bot_types:
-            bot_type_list.extend([bot_type] * bots_per_type)
-        bot_type_list.extend([bot_types[0]] * remaining)  # Fill any remainder with random
-        random.shuffle(bot_type_list)
-        
-        # All bots get equal initial USD (same as users)
-        initial_usd = self.initial_usd_per_participant
-        
-        # Create bots with equal initial USD balances
-        for i, bot_type in enumerate(bot_type_list):
-            bot = Bot(
-                bot_id=None,  # Auto-generated
-                is_toggled=True,
-                usd_given=initial_usd,
-                usd=initial_usd,
-                bc=0.0,
-                bot_type=bot_type
-            )
-            
-            self.bots.append(bot)
-            # Save bot to Redis
-            bot.save_to_redis(self.game_id)
     
     def addUser(self, userID: str):
         """Add a user to the market"""
@@ -164,68 +115,57 @@ class Market:
         # Increment tick
         self.current_tick += 1
         
-        # Use actual bots to make trading decisions instead of random trades
-        current_price = self.dollar_supply / self.bc_supply if self.bc_supply > 0 else 1.0
-        price_history = self.market_data.price_history
+        # Ensure supplies are always above minimum thresholds BEFORE any calculations
+        MIN_BC_SUPPLY = 10000.0  # Increased minimum to prevent extreme price swings
+        MIN_DOLLAR_SUPPLY = 10000.0
         
-        # Ensure we have bots (recreate if needed)
-        if not self.bots or len(self.bots) == 0:
-            self._create_market_bots()
+        self.bc_supply = max(MIN_BC_SUPPLY, self.bc_supply)
+        self.dollar_supply = max(MIN_DOLLAR_SUPPLY, self.dollar_supply)
         
-        # Have each bot make a trading decision
-        for bot in self.bots:
-            if not bot.is_toggled:
-                continue
+        # Simulate market activity with random trades to change supplies
+        # This creates realistic price movement with higher volatility
+        for _ in range(num_simulated_trades):
+            # Calculate current price safely
+            if self.bc_supply <= 0:
+                self.bc_supply = MIN_BC_SUPPLY
+            if self.dollar_supply <= 0:
+                self.dollar_supply = MIN_DOLLAR_SUPPLY
             
-            try:
-                # Get price history for bot analysis (last 50 prices)
-                coins = price_history[-50:] if len(price_history) > 50 else price_history
+            current_price = self.dollar_supply / self.bc_supply
+            
+            # Much larger, variable trade sizes for more volatility
+            # Trade between 0.3% to 1.5% of current BC supply (reduced to prevent extreme swings)
+            min_trade = self.bc_supply * 0.003  # 0.3%
+            max_trade = self.bc_supply * 0.015   # 1.5%
+            trade_size = random.uniform(min_trade, max_trade)
+            
+            # Random buy or sell (50/50 chance)
+            if random.random() > 0.5:
+                # Simulated buy: BC leaves market, USD enters market
+                new_bc_supply = self.bc_supply - trade_size
+                new_dollar_supply = self.dollar_supply + current_price * trade_size
                 
-                # Bot makes trading decision
-                decision = bot.analyze(coins, current_price)
+                # Only apply trade if it doesn't violate minimum constraints
+                if new_bc_supply >= MIN_BC_SUPPLY and new_dollar_supply >= MIN_DOLLAR_SUPPLY:
+                    self.bc_supply = new_bc_supply
+                    self.dollar_supply = new_dollar_supply
+            else:
+                # Simulated sell: BC enters market, USD leaves market
+                new_bc_supply = self.bc_supply + trade_size
+                new_dollar_supply = self.dollar_supply - current_price * trade_size
                 
-                # Execute trade if decision is not 'hold'
-                if decision['action'] != 'hold' and decision['amount'] > 0:
-                    # Get game data for trade execution
-                    game_data = bot._get_game_data_from_redis(self.game_id)
-                    if not game_data:
-                        # Initialize game data if it doesn't exist
-                        game_data = {
-                            'totalBc': self.bc_supply,
-                            'totalUsd': self.dollar_supply,
-                            'players': [],
-                            'interactions': []
-                        }
-                    
-                    success = False
-                    if decision['action'] == 'buy':
-                        success = bot.buy(decision['amount'], current_price, game_data, bot.user_id)
-                    elif decision['action'] == 'sell':
-                        success = bot.sell(decision['amount'], current_price, game_data, bot.user_id)
-                    
-                    if success:
-                        # Update market supplies from game_data
-                        self.dollar_supply = float(game_data.get('totalUsd', self.dollar_supply))
-                        self.bc_supply = float(game_data.get('totalBc', self.bc_supply))
-                        
-                        # Save bot state
-                        bot.save_to_redis(self.game_id)
-                        
-                        # Save game data
-                        bot._save_game_data_to_redis(self.game_id, game_data)
-                        
-            except Exception as e:
-                # Continue with other bots if one fails
-                print(f"Error in bot {bot.bot_id[:8]} trading: {e}")
-                continue
+                # Only apply trade if it doesn't violate minimum constraints
+                if new_bc_supply >= MIN_BC_SUPPLY and new_dollar_supply >= MIN_DOLLAR_SUPPLY:
+                    self.bc_supply = new_bc_supply
+                    self.dollar_supply = new_dollar_supply
         
-        # Ensure supplies don't go negative or too low (after all bots have traded)
-        self.bc_supply = max(1000, self.bc_supply)
-        self.dollar_supply = max(1000, self.dollar_supply)
+        # Ensure supplies are still above minimums after all trades
+        self.bc_supply = max(MIN_BC_SUPPLY, self.bc_supply)
+        self.dollar_supply = max(MIN_DOLLAR_SUPPLY, self.dollar_supply)
         
-        # Calculate new price with updated supplies
+        # Calculate new price with updated supplies (guaranteed safe division)
         new_price = self.dollar_supply / self.bc_supply
-        new_price = max(0.01, new_price)  # Ensure price doesn't go below 0.01
+        new_price = max(0.10, min(new_price, 100.0))  # Clamp price between $0.10 and $100
         
         # Update price history
         self.market_data.price_history.append(new_price)
@@ -329,14 +269,6 @@ class Market:
             market.dollar_supply = dollar_supply
             market.bc_supply = bc_supply
             market.market_data = market_data_obj
-            
-            # Set default initial_usd_per_participant (use 10000 as default when loading)
-            # This should match what was used when creating the market
-            market.initial_usd_per_participant = 10000.0
-            
-            # Recreate bots (they should be loaded from Redis when needed)
-            market.bots = []
-            market._create_market_bots()
             
             return market
             

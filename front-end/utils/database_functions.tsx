@@ -74,6 +74,12 @@ export interface User extends Player {
 }
 
 export interface Interaction {
+  // New fields (added for transaction history)
+  name?: string;              // Actor name (user or bot)
+  type?: string;              // 'buy' or 'sell'
+  value?: number;             // Amount in cents
+  
+  // Legacy fields
   interactionName: string;
   interactionDescription: string;
 }
