@@ -682,6 +682,73 @@ async def list_user_bots(game_id: str, user_id: str):
         logger.error(f"Error listing bots: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.get("/api/game/leaderboard/{game_id}")
+async def get_wealth_leaderboard(game_id: str):
+    """
+    Get wealth leaderboard for all users in the game.
+    Wealth = USD balance + (BananaCoin balance * current_price)
+    
+    Returns a sorted leaderboard by wealth (descending).
+    """
+    try:
+        # Load market to get current price
+        market = Market.load_from_redis(game_id)
+        if not market:
+            raise HTTPException(status_code=404, detail="Market not found")
+        
+        current_price = market.market_data.current_price
+        
+        # Get game data from Redis
+        r = get_redis_connection()
+        game_data = r.hgetall(f"game:{game_id}")
+        
+        if not game_data:
+            raise HTTPException(status_code=404, detail="Game not found")
+        
+        import json
+        players = json.loads(game_data.get('players', '[]'))
+        
+        if not players:
+            raise HTTPException(status_code=404, detail="No players found in game")
+        
+        # Calculate wealth for each player
+        player_wealths = []
+        for player in players:
+            # Handle both field name conventions (userId/playerId, usd/usdBalance, coins/coinBalance)
+            player_id = player.get('userId') or player.get('playerId')
+            player_name = player.get('userName') or player.get('playerName', 'Unknown')
+            
+            # Get USD balance (handle both field names)
+            usd_balance = float(player.get('usd', player.get('usdBalance', 0)))
+            
+            # Get BC balance (handle both field names)
+            bc_balance = float(player.get('coins', player.get('coinBalance', 0)))
+            
+            # Calculate wealth: USD + (BC * current_price)
+            wealth = usd_balance + (bc_balance * current_price)
+            
+            player_wealths.append({
+                'userId': player_id,
+                'userName': player_name,
+                'usdBalance': usd_balance,
+                'coinBalance': bc_balance,
+                'wealth': wealth
+            })
+        
+        # Sort by wealth (descending)
+        player_wealths.sort(key=lambda x: x['wealth'], reverse=True)
+        
+        return {
+            "success": True,
+            "leaderboard": player_wealths
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting wealth leaderboard: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.get("/health")
 async def health_check():
@@ -712,6 +779,7 @@ async def root():
             "GET /api/game/market-data/{game_id}": "Get market data and price history",
             "POST /api/game/buy-coins": "Execute buy trade",
             "POST /api/game/sell-coins": "Execute sell trade",
+            "GET /api/game/leaderboard/{game_id}": "Get wealth leaderboard (richest player)",
             "POST /api/bot/buy": "Purchase a bot",
             "POST /api/bot/toggle": "Toggle bot on/off",
             "GET /api/bot/list/{game_id}/{user_id}": "List user's bots",
