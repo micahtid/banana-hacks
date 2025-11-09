@@ -47,12 +47,26 @@ export const signOut = () => {
 export interface Bot {
   botId: string;
   botName: string;
+  startingUsdBalance: number;
+  usdBalance: number;
+  coinBalance: number;
+  isActive: boolean;
 }
 
-export interface User {
+export interface Player {
+  playerId: string;
+  playerName: string;
+  coinBalance: number;
+  usdBalance: number;
+  lastInteractionValue: number;
+  lastInteractionTime: Date;
+  bots: Bot[];
+}
+
+// Alias for backward compatibility
+export interface User extends Player {
   userId: string;
   userName: string;
-  bots: Bot[];
   coins: number;
   usd: number;
   lastInteractionV: number;
@@ -60,24 +74,36 @@ export interface User {
 }
 
 export interface Interaction {
-  name: string;
-  type: string;
-  value: number;
+  interactionName: string;
+  interactionDescription: string;
 }
 
 export interface Game {
   gameId: string;
   isStarted: boolean;
-  isEnded: boolean;
-  users: User[];
-  coin: number[];
-  interactions: number; // Count of total trades
-  eventTimer: Date;
-  startTime: Date | null;
-  endTime: Date | null;
-  gameDuration: number;
+  durationMinutes: number;
   maxPlayers: number;
-  creatorId: string;
+  eventTime: Date;
+
+  players: Player[];
+
+  coinHistory: number[];
+  totalCoin: number;
+  totalUsd: number;
+
+  interactions: Interaction[];
+
+  // Additional fields for backward compatibility
+  isEnded?: boolean;
+  startTime?: Date | null;
+  endTime?: Date | null;
+  creatorId?: string;
+
+  // Alias for backward compatibility
+  users?: Player[];
+  coin?: number[];
+  gameDuration?: number;
+  eventTimer?: Date;
 }
 
 /**
@@ -167,8 +193,8 @@ export const getRoom = (
   // Initial fetch
   fetchGame();
 
-  // Poll every 2 seconds for updates
-  intervalId = setInterval(fetchGame, 2000);
+  // Poll every 1 second to match backend market update rate
+  intervalId = setInterval(fetchGame, 1000);
 
   // Return unsubscribe function
   return () => clearInterval(intervalId);

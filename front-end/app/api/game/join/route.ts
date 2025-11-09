@@ -51,13 +51,13 @@ export async function POST(request: NextRequest) {
     }
 
     players.push({
-      userId,
-      userName,
-      coins: 0,
-      usd: 1000,
+      playerId: userId,
+      playerName: userName,
+      coinBalance: 0,
+      usdBalance: 10000,
       bots: [],
-      lastInteractionV: 0,
-      lastInteractionT: new Date().toISOString(),
+      lastInteractionValue: 0,
+      lastInteractionTime: new Date().toISOString(),
     });
 
     await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));

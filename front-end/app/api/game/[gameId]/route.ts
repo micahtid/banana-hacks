@@ -29,12 +29,36 @@ export async function GET(
 
     // Parse JSON fields and transform to match Game interface
     const players = JSON.parse(gameData.players || '[]');
+    const coinHistory = JSON.parse(gameData.coinHistory || '[1.0]');
+    const interactions = JSON.parse(gameData.interactions || '[]');
 
-    // Transform players to match User interface (convert ISO string to Date)
-    const users = players.map((player: any) => ({
-      ...player,
-      lastInteractionT: player.lastInteractionT ? new Date(player.lastInteractionT) : new Date(),
-    }));
+    // Transform players to match both new and old interface (convert ISO string to Date)
+    const transformedPlayers = players.map((player: any) => {
+      // Support both old and new field names
+      const playerId = player.playerId || player.userId;
+      const playerName = player.playerName || player.userName;
+      const coinBalance = player.coinBalance ?? player.coins ?? 0;
+      const usdBalance = player.usdBalance ?? player.usd ?? 10000;
+      const lastInteractionValue = player.lastInteractionValue ?? player.lastInteractionV ?? 0;
+      const lastInteractionTime = player.lastInteractionTime || player.lastInteractionT;
+
+      return {
+        playerId,
+        playerName,
+        coinBalance,
+        usdBalance,
+        lastInteractionValue,
+        lastInteractionTime: lastInteractionTime ? new Date(lastInteractionTime) : new Date(),
+        bots: player.bots || [],
+        // Aliases for backward compatibility
+        userId: playerId,
+        userName: playerName,
+        coins: coinBalance,
+        usd: usdBalance,
+        lastInteractionV: lastInteractionValue,
+        lastInteractionT: lastInteractionTime ? new Date(lastInteractionTime) : new Date(),
+      };
+    });
 
     // ✨ NEW: Get current price and market data from FastAPI if available
     let currentPrice = parseFloat(gameData.coinPrice || '100');
@@ -44,35 +68,62 @@ export async function GET(
     
     try {
       const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
-      const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`);
-      
+
+      // Add timeout to prevent slow API calls from blocking
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout
+
+      const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`, {
+        signal: controller.signal,
+        headers: {
+          'Cache-Control': 'no-cache, no-store, must-revalidate',
+        },
+      });
+
+      clearTimeout(timeoutId);
+
       if (marketResponse.ok) {
         const marketData = await marketResponse.json();
         currentPrice = marketData.currentPrice;
         priceHistory = marketData.priceHistory || [];
         volatility = marketData.volatility || 0;
         marketActive = true;
-        console.log(`Fetched market data: price=$${currentPrice.toFixed(2)}, history length=${priceHistory.length}`);
       }
     } catch (error) {
-      console.log('Market data not available, using static price');
-      // Continue with static price if FastAPI is not available
+      // Continue with static price if FastAPI is not available or times out
+      if (error instanceof Error && error.name === 'AbortError') {
+        console.log('Market data fetch timed out');
+      }
     }
 
     const parsedData = {
       gameId,
       isStarted: gameData.isStarted === 'true',
+      durationMinutes: parseInt(gameData.durationMinutes || gameData.duration || '30'),
+      maxPlayers: parseInt(gameData.maxPlayers || '4'),
+      eventTime: gameData.eventTime ? new Date(gameData.eventTime) : new Date(),
+
+      players: transformedPlayers,
+
+      coinHistory: priceHistory.length > 0 ? priceHistory : coinHistory,
+      totalCoin: parseFloat(gameData.totalCoin || '1000000'),
+      totalUsd: parseFloat(gameData.totalUsd || '1000000'),
+
+      interactions: interactions,
+
+      // Additional fields for backward compatibility
       isEnded: gameData.isEnded === 'true',
-      users, // Transform 'players' to 'users' to match Game interface
-      coin: priceHistory.length > 0 ? priceHistory : [currentPrice], // Use price history if available, else array with current price
-      interactions: parseInt(gameData.interactions || '0'), // Get trade count from Redis
-      eventTimer: gameData.eventTimer ? new Date(parseInt(gameData.eventTimer)) : new Date(),
       startTime: gameData.startedAt ? new Date(parseInt(gameData.startedAt)) : null,
       endTime: gameData.endedAt ? new Date(parseInt(gameData.endedAt)) : null,
-      gameDuration: parseInt(gameData.duration || '300'),
-      maxPlayers: parseInt(gameData.maxPlayers || '4'),
       creatorId: gameData.creatorId,
-      // ✨ NEW: Additional market data
+
+      // Aliases for backward compatibility
+      users: transformedPlayers,
+      coin: priceHistory.length > 0 ? priceHistory : coinHistory,
+      gameDuration: parseInt(gameData.durationMinutes || gameData.duration || '30'),
+      eventTimer: gameData.eventTime ? new Date(gameData.eventTime) : new Date(),
+
+      // Additional market data
       currentPrice,
       volatility,
       marketActive,

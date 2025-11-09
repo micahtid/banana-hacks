@@ -16,7 +16,7 @@ from datetime import datetime
 from market import Market, MarketData
 from user import User
 from wallet import UserWallet
-from bot import BotManager
+# from bot import BotManager
 from redis_helper import get_redis_connection
 
 # Configure logging

@@ -44,7 +44,8 @@ export async function POST(request: NextRequest) {
       // Continue with static price if FastAPI is not available
     }
 
-    const playerIndex = players.findIndex((p: any) => p.userId === userId);
+    // Support both old (userId) and new (playerId) field names
+    const playerIndex = players.findIndex((p: any) => (p.playerId || p.userId) === userId);
     if (playerIndex === -1) {
       return NextResponse.json(
         { error: 'Player not found in game' },
@@ -54,7 +55,11 @@ export async function POST(request: NextRequest) {
 
     const player = players[playerIndex];
 
-    if (player.coins < amount) {
+    // Support both old and new field names
+    const currentUsd = player.usdBalance ?? player.usd ?? 0;
+    const currentCoins = player.coinBalance ?? player.coins ?? 0;
+
+    if (currentCoins < amount) {
       return NextResponse.json(
         { error: 'Insufficient coins' },
         { status: 400 }
@@ -62,15 +67,27 @@ export async function POST(request: NextRequest) {
     }
 
     const totalRevenue = amount * coinPrice;
-    player.coins -= amount;
-    player.usd += totalRevenue;
+
+    // Update using new field names (and maintain old for backward compatibility)
+    player.coinBalance = currentCoins - amount;
+    player.usdBalance = currentUsd + totalRevenue;
+    player.coins = player.coinBalance;
+    player.usd = player.usdBalance;
+    player.lastInteractionValue = amount;
+    player.lastInteractionTime = new Date().toISOString();
+    player.lastInteractionV = amount;
+    player.lastInteractionT = player.lastInteractionTime;
 
     // Update players
     await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));
-    
-    // Track the interaction (increment trade counter)
-    const currentInteractions = parseInt(gameData.interactions || '0');
-    await redis.hset(`game:${gameId}`, 'interactions', (currentInteractions + 1).toString());
+
+    // Track the interaction
+    const interactions = JSON.parse(gameData.interactions || '[]');
+    interactions.push({
+      interactionName: 'Sell Coins',
+      interactionDescription: `${player.playerName || player.userName} sold ${amount} BC for $${totalRevenue.toFixed(2)}`
+    });
+    await redis.hset(`game:${gameId}`, 'interactions', JSON.stringify(interactions));
 
     return NextResponse.json({ 
       success: true, 
