@@ -26,7 +26,7 @@ import {
   Legend,
   Filler,
 } from "chart.js";
-import { FaTrophy } from "react-icons/fa";
+import { FaTrophy, FaMedal, FaAward } from "react-icons/fa";
 
 ChartJS.register(
   CategoryScale,
@@ -74,6 +74,23 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const interactionsArr = Array.isArray(game.interactions)
     ? game.interactions
     : [];
+
+  // Calculate current user's total trades (their own + their bots' trades)
+  const currentUserName = currentUser.userName || currentUser.playerName;
+  const currentUserBotNames = (currentUser.bots || []).map((bot: any) => bot.botName).filter(Boolean);
+
+  const currentUserTotalTrades = interactionsArr.filter((interaction: any) => {
+    if (!interaction.name) return false;
+    const name = interaction.name;
+
+    // Check if it's the user's own trade
+    if (name === currentUserName) return true;
+
+    // Check if it's one of the user's bots
+    return currentUserBotNames.some((botName: string) =>
+      name.includes(botName) || name.toLowerCase().includes(botName.toLowerCase())
+    );
+  }).length;
 
   const currentPrice = coinsArr.length > 0 ? Number(coinsArr.at(-1)) : 1.0;
   const previousPrice =
@@ -368,9 +385,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm text-[var(--primary)]">Total Volume</div>
+                  <div className="text-sm text-[var(--primary)]">Your Total Trades</div>
                   <div className="font-retro text-2xl text-[var(--primary-dark)]">
-                    {interactionsArr.length} trades
+                    {currentUserTotalTrades}
                   </div>
                 </div>
               </div>
@@ -449,10 +466,21 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 {minions.map((minion: any) => {
                   const isActive = minion.isActive ?? false;
                   const minionId = minion.botId ?? '';
-                  const usdBalance = typeof minion.usdBalance === 'number' ? minion.usdBalance : 0;
                   const coinBalance = typeof minion.coinBalance === 'number' ? minion.coinBalance : 0;
-                  const startingBalance = typeof minion.startingUsdBalance === 'number' ? minion.startingUsdBalance : 0;
-                  const performance = startingBalance > 0 ? ((usdBalance + coinBalance * currentPrice - startingBalance) / startingBalance * 100) : 0;
+
+                  // Calculate performance based on BC value in USD
+                  // Since bots use the user's wallet, we track their BC holdings' value change
+                  const currentValue = coinBalance * currentPrice;
+
+                  // If we have a starting balance, use it; otherwise estimate from initial bot cost
+                  // Most bots start with ~$500-1500, so we can estimate initial BC based on that
+                  const estimatedStartingUSD = 1000; // Rough average bot starting allocation
+                  const estimatedStartingBC = estimatedStartingUSD / (coinsArr[0] || 1); // Initial price
+                  const startingValue = estimatedStartingBC * (coinsArr[0] || 1);
+
+                  // Calculate performance as change in value
+                  const valueChange = currentValue - startingValue;
+                  const performancePercent = startingValue > 0 ? (valueChange / startingValue) * 100 : 0;
 
                   return (
                     <div
@@ -473,10 +501,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                           size="sm"
                           disabled={togglingMinion !== null}
                         >
-                          {togglingMinion === minionId 
-                            ? "..." 
-                            : isActive 
-                            ? "Stop" 
+                          {togglingMinion === minionId
+                            ? "..."
+                            : isActive
+                            ? "Stop"
                             : "Start"}
                         </Button>
                       </div>
@@ -488,21 +516,21 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span>USD Balance:</span>
-                          <span className="text-[var(--success)]">
-                            ${usdBalance.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
                           <span>BC Balance:</span>
                           <span className="text-[var(--primary-dark)]">
                             {coinBalance.toFixed(2)} BC
                           </span>
                         </div>
                         <div className="flex justify-between">
+                          <span>BC Value:</span>
+                          <span className="text-[var(--success)]">
+                            ${currentValue.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
                           <span>Performance:</span>
-                          <span className={performance >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
-                            {performance >= 0 ? '+' : ''}{performance.toFixed(1)}%
+                          <span className={performancePercent >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
+                            {performancePercent >= 0 ? '+' : ''}{performancePercent.toFixed(1)}%
                           </span>
                         </div>
                       </div>
@@ -557,11 +585,11 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                       }`}
                     >
                       <div className="flex items-center gap-4">
-                        <div className="font-retro text-2xl text-[var(--primary-dark)] min-w-[3rem] text-center">
-                          {index === 0 && "🥇"}
-                          {index === 1 && "🥈"}
-                          {index === 2 && "🥉"}
-                          {index > 2 && `#${index + 1}`}
+                        <div className="min-w-[3rem] flex items-center justify-center">
+                          {index === 0 && <FaTrophy className="text-3xl text-yellow-400" />}
+                          {index === 1 && <FaMedal className="text-3xl text-gray-400" />}
+                          {index === 2 && <FaAward className="text-3xl text-amber-600" />}
+                          {index > 2 && <span className="font-retro text-2xl text-[var(--primary-dark)]">#{index + 1}</span>}
                         </div>
                         <div className="font-retro text-xl text-[var(--primary-dark)]">
                           {entry.userName}

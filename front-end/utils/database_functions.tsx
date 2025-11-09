@@ -47,8 +47,6 @@ export const signOut = () => {
 export interface Bot {
   botId: string;
   botName: string;
-  startingUsdBalance: number;
-  usdBalance: number;
   coinBalance: number;
   isActive: boolean;
 }

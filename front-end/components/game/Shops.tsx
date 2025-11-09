@@ -111,17 +111,26 @@ export default function Shops({ game, currentUser }: ShopsProps) {
       return;
     }
 
+    // Count existing bots of the same type to generate number
+    const existingBots = currentUser.bots || [];
+    const sameTypeBots = existingBots.filter((bot: any) =>
+      bot.botName && bot.botName.startsWith(minion.name)
+    );
+    const botNumber = sameTypeBots.length + 1;
+    const numberedBotName = `${minion.name} ${botNumber}`;
+
     setBuyingMinion(minion.id);
     try {
-      console.log('[Shops] Purchasing minion:', { 
-        minionPrice: minion.price, 
-        userId: currentUser.userId, 
-        gameId: game.gameId, 
-        minionType: minion.id 
+      console.log('[Shops] Purchasing minion:', {
+        minionPrice: minion.price,
+        userId: currentUser.userId,
+        gameId: game.gameId,
+        minionType: minion.id,
+        botName: numberedBotName
       });
-      
-      await buyMinion(minion.price, currentUser.userId, game.gameId, minion.id, minion.name);
-      console.log(`[Shops] ✅ Successfully purchased ${minion.name}!`);
+
+      await buyMinion(minion.price, currentUser.userId, game.gameId, minion.id, numberedBotName);
+      console.log(`[Shops] ✅ Successfully purchased ${numberedBotName}!`);
     } catch (error) {
       console.error("[Shops] ❌ Failed to buy minion:", error);
     } finally {
@@ -155,18 +164,27 @@ export default function Shops({ game, currentUser }: ShopsProps) {
       return;
     }
 
+    // Count existing custom minions to generate number
+    const existingBots = currentUser.bots || [];
+    const customBots = existingBots.filter((bot: any) =>
+      bot.botName && bot.botName.startsWith("Custom Minion")
+    );
+    const botNumber = customBots.length + 1;
+    const numberedBotName = `Custom Minion ${botNumber}`;
+
     setBuyingMinion("custom");
     try {
-      console.log('[Shops] Creating custom minion:', { 
-        minionPrice: CUSTOM_MINION_PRICE, 
-        userId: currentUser.userId, 
-        gameId: game.gameId, 
-        customPrompt 
+      console.log('[Shops] Creating custom minion:', {
+        minionPrice: CUSTOM_MINION_PRICE,
+        userId: currentUser.userId,
+        gameId: game.gameId,
+        customPrompt,
+        botName: numberedBotName
       });
-      
-      await buyMinion(CUSTOM_MINION_PRICE, currentUser.userId, game.gameId, "custom", "Custom Minion", customPrompt);
+
+      await buyMinion(CUSTOM_MINION_PRICE, currentUser.userId, game.gameId, "custom", numberedBotName, customPrompt);
       setCustomPrompt("");
-      console.log("[Shops] ✅ Successfully created custom minion!");
+      console.log(`[Shops] ✅ Successfully created ${numberedBotName}!`);
     } catch (error) {
       console.error("[Shops] ❌ Failed to buy custom minion:", error);
     } finally {
