@@ -66,23 +66,30 @@ export async function POST(request: NextRequest) {
     const currentUsd = player.usdBalance ?? player.usd ?? 0;
     const currentCoins = player.coinBalance ?? player.coins ?? 0;
 
-    if (currentCoins < amount) {
-      return NextResponse.json(
-        { error: 'Insufficient coins' },
-        { status: 400 }
-      );
+    // If trying to sell more than available, sell all available coins
+    const actualAmount = Math.min(amount, currentCoins);
+    
+    if (actualAmount <= 0) {
+      return NextResponse.json({
+        success: false,
+        player,
+        coinPrice,
+        totalRevenue: 0,
+        reason: 'No coins to sell'
+      });
     }
 
-    const totalRevenue = amount * coinPrice;
+    const totalRevenue = actualAmount * coinPrice;
 
     // Update using new field names (and maintain old for backward compatibility)
-    player.coinBalance = currentCoins - amount;
-    player.usdBalance = currentUsd + totalRevenue;
+    // Prevent negative balances (use actualAmount, not amount)
+    player.coinBalance = Math.max(0, currentCoins - actualAmount);
+    player.usdBalance = Math.max(0, currentUsd + totalRevenue);
     player.coins = player.coinBalance;
     player.usd = player.usdBalance;
-    player.lastInteractionValue = amount;
+    player.lastInteractionValue = actualAmount;
     player.lastInteractionTime = new Date().toISOString();
-    player.lastInteractionV = amount;
+    player.lastInteractionV = actualAmount;
     player.lastInteractionT = player.lastInteractionTime;
 
     // Update players
@@ -96,10 +103,10 @@ export async function POST(request: NextRequest) {
     interactions.push({
       name: playerName,  // Required for front-end
       type: 'sell',      // Required for front-end
-      value: Math.round(amount * 100),  // Amount in cents
+      value: Math.round(actualAmount * 100),  // Amount in cents
       timestamp: new Date().toISOString(),  // Add timestamp
       interactionName: playerName,
-      interactionDescription: `${playerName} sold ${amount} BC for $${totalRevenue.toFixed(2)}`
+      interactionDescription: `${playerName} sold ${actualAmount} BC for $${totalRevenue.toFixed(2)}${actualAmount < amount ? ` (requested ${amount})` : ''}`
     });
     await redis.hset(`game:${gameId}`, 'interactions', JSON.stringify(interactions));
 

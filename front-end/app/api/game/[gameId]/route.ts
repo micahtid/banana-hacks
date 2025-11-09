@@ -128,6 +128,8 @@ export async function GET(
     let marketActive = false;
     let eventTitle = '';
     let eventTriggered = false;
+    let genericNews = '';
+    let allGenericNews: string[] = [];
     
     try {
       // First, try to read market data directly from Redis (faster and more reliable)
@@ -156,11 +158,10 @@ export async function GET(
         }
       }
       
-      // If Redis market data is not available, try FastAPI as fallback
-      if (!marketActive) {
-        const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
-
-        // Reduced timeout to 200ms for faster polling
+      // Always try to get generic news from FastAPI (even if we have Redis data)
+      // This ensures we always have generic news when there's no event
+      const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
+      try {
         const controller = new AbortController();
         const timeoutId = setTimeout(() => controller.abort(), 200);
 
@@ -175,17 +176,55 @@ export async function GET(
 
         if (marketResponse.ok) {
           const marketData = await marketResponse.json();
-          currentPrice = marketData.currentPrice;
-          priceHistory = marketData.priceHistory || [];
-          volatility = marketData.volatility || 0;
-          eventTitle = marketData.eventTitle || '';
-          eventTriggered = marketData.eventTriggered || false;
-          marketActive = true;
+          
+          // If Redis market data is not available, use FastAPI data
+          if (!marketActive) {
+            currentPrice = marketData.currentPrice;
+            priceHistory = marketData.priceHistory || [];
+            volatility = marketData.volatility || 0;
+            eventTitle = marketData.eventTitle || '';
+            eventTriggered = marketData.eventTriggered || false;
+            marketActive = true;
+          }
+          
+          // Always get generic news from market data if available
+          // Check for both truthy value and non-empty string
+          if (marketData.genericNews && marketData.genericNews.trim() !== '') {
+            genericNews = marketData.genericNews;
+          }
+          // Get all headlines for rotation
+          // Always update to get latest headlines from backend
+          // Create a new array reference to ensure React detects the change
+          if (marketData.allGenericNews && Array.isArray(marketData.allGenericNews)) {
+            allGenericNews = [...marketData.allGenericNews];
+          }
+        } else if (marketResponse.status === 404) {
+          // Market doesn't exist yet - provide fallback generic news
+          // This happens when game is created but market hasn't started
+          genericNews = "Market Opening Soon";
         }
+      } catch (error) {
+        // Silently fail - we'll just use Redis data
       }
     } catch (error) {
       // Continue with static price if market data is not available
       // Don't log errors to reduce console spam
+    }
+    
+    // Ensure we always have a fallback generic news if none was provided
+    if (!genericNews || genericNews.trim() === '') {
+      genericNews = "Market Activity Normal";
+    }
+    // Ensure we have fallback headlines for rotation
+    if (!allGenericNews || allGenericNews.length === 0) {
+      allGenericNews = [
+        "Market Analysts Predict Bullish Trend",
+        "New Trading Features Announced",
+        "Investor Confidence Remains High",
+        "Price Stability Maintained",
+        "Trading Activity Increases",
+        "Market Activity Normal"
+      ];
     }
 
     const parsedData = {
@@ -221,7 +260,9 @@ export async function GET(
       marketActive,
       priceHistoryLength: priceHistory.length,
       eventTitle,
-      eventTriggered
+      eventTriggered,
+      genericNews: genericNews, // Will be populated from market data if available
+      allGenericNews: allGenericNews // All headlines for rotation
     };
 
     const response = NextResponse.json({ game: parsedData, success: true });

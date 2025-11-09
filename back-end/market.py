@@ -143,10 +143,20 @@ class Market:
         # Increment tick
         self.current_tick += 1
         
+        # Track if event state changed (needs to be saved)
+        event_state_changed = False
+        
         # Check if event should trigger
         if not self.event_triggered and self.current_tick >= self.event_tick:
             self.event_triggered = True
             self._trigger_event()
+            event_state_changed = True
+        
+        # Reset event_triggered after 10 seconds (10 ticks) to allow front-end timeout to work
+        # This ensures the event banner disappears after the timeout period
+        if self.event_triggered and self.current_tick >= self.event_tick + 10:
+            self.event_triggered = False
+            event_state_changed = True
         
         # Ensure supplies are always above minimum thresholds BEFORE any calculations
         MIN_BC_SUPPLY = 10000.0  # Increased minimum to prevent extreme price swings
@@ -198,7 +208,7 @@ class Market:
         
         # Calculate new price with updated supplies (guaranteed safe division)
         new_price = self.dollar_supply / self.bc_supply
-        new_price = max(0.10, min(new_price, 100.0))  # Clamp price between $0.10 and $100
+        new_price = max(0.10, new_price)  # Ensure minimum price of $0.10 (no upper limit)
         
         # Update price history
         self.market_data.price_history.append(new_price)
@@ -219,7 +229,13 @@ class Market:
             self.market_data.volatility = 0.0
         
         # Save to Redis after update
+        # Always save, but if event state changed, ensure it's saved immediately
         self.save_to_redis()
+        
+        # If event state changed, save again to ensure it's persisted
+        # This is important for frontend polling to see the state change
+        if event_state_changed:
+            self.save_to_redis()
     
     def _trigger_event(self):
         """Trigger a market event with sudden price change"""

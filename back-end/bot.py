@@ -50,7 +50,7 @@ The code must:
 3. DO NOT include import statements - math and random modules are already available
 4. Be safe to execute (no file I/O, no network calls, no system commands)
 5. Handle edge cases (empty list, single price, etc.)
-6. Use reasonable trading amounts (0.5 to 5.0 coins)
+6. Use reasonable trading amounts (100.0 to 600.0 coins) - bots have significant capital and trade in large volumes
 7. ALWAYS return a valid dictionary - never return None
 
 Example structure:
@@ -60,7 +60,7 @@ def custom_strategy(coins, current_price):
     # Use math.sqrt(), random.random(), etc. directly - no imports needed
     avg = sum(coins) / len(coins)
     if current_price > avg * 1.05:
-        return {'action': 'buy', 'amount': 2.0}
+        return {'action': 'buy', 'amount': 200.0}
     return {'action': 'hold', 'amount': 0.0}
 """
     
@@ -71,7 +71,7 @@ Remember: Output ONLY the Python code, nothing else."""
     
     try:
         response = client.models.generate_content(
-            model="gemini-2.0-flash-exp",
+            model="gemini-2.5-pro",
             contents=user_request,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -144,9 +144,9 @@ Remember: Output ONLY the Python code, nothing else."""
     if len(coins) < 2:
         return {'action': 'hold', 'amount': 0.0}
     if random.random() > 0.5:
-        return {'action': 'buy', 'amount': 1.0}
+        return {'action': 'buy', 'amount': 200.0}
     else:
-        return {'action': 'sell', 'amount': 1.0}
+        return {'action': 'sell', 'amount': 200.0}
 """
 
 
@@ -207,34 +207,68 @@ class Bot:
         """Get default parameters based on bot type"""
         defaults = {
             'random': {
-                'min_trade': 0.5,
-                'max_trade': 3.0,
+                'min_trade': 2.0,  # 20x increase (was 2.0)
+                'max_trade': 60.0,  # 20x increase (was 10.0)
                 'trade_probability': 0.3
             },
             'momentum': {
                 'short_window': 5,
                 'long_window': 20,
-                'trade_size': 2.0,
+                'trade_size': 40.0,  # 20x increase (was 8.0)
                 'aggressiveness': 1.0
             },
             'mean_reversion': {
                 'lookback_window': 20,
                 'std_threshold': 1.5,
-                'trade_size': 2.5
+                'trade_size': 50.0  # 20x increase (was 10.0)
             },
             'market_maker': {
                 'target_bc_ratio': 0.5,
                 'rebalance_threshold': 0.1,
-                'trade_size': 1.5
+                'trade_size': 30.0  # 20x increase (was 6.0)
             },
             'hedger': {
                 'volatility_threshold': 0.05,
                 'low_vol_ratio': 0.7,
                 'high_vol_ratio': 0.3,
-                'trade_size': 2.0
+                'trade_size': 40.0  # 20x increase (was 8.0)
             }
         }
         return defaults.get(self.bot_type, defaults['random'])
+    
+    def _scale_trade_amount(self, base_amount: float, current_price: float, action: str) -> float:
+        """
+        Scale trade amount based on bot's available capital.
+        For buys: scale based on available USD (use up to 20% of USD per trade)
+        For sells: scale based on available BC (use up to 20% of BC per trade)
+        
+        Args:
+            base_amount: Base trade amount from strategy
+            current_price: Current coin price
+            action: 'buy' or 'sell'
+        
+        Returns:
+            Scaled trade amount
+        """
+        if action == 'buy':
+            # For buys, scale based on available USD
+            # Use up to 20% of available USD per trade
+            max_usd_to_use = self.usd * 0.2
+            max_bc_from_usd = max_usd_to_use / current_price if current_price > 0 else 0
+            # Use the larger of base_amount or scaled amount, but cap at what we can afford
+            scaled_amount = max(base_amount, max_bc_from_usd)
+            # Cap at what we can actually afford
+            max_affordable = self.usd / current_price if current_price > 0 else 0
+            return min(scaled_amount, max_affordable)
+        elif action == 'sell':
+            # For sells, scale based on available BC
+            # Use up to 20% of available BC per trade
+            max_bc_to_use = self.bc * 0.2
+            # Use the larger of base_amount or scaled amount, but cap at what we have
+            scaled_amount = max(base_amount, max_bc_to_use)
+            return min(scaled_amount, self.bc)
+        else:
+            return base_amount
     
     def analyze(self, coins: List[float], current_price: Optional[float] = None) -> Dict:
         """
@@ -286,6 +320,9 @@ class Bot:
         max_trade = self.parameters['max_trade'] * self._personality_factor
         amount = random.uniform(min_trade, max_trade)
         
+        # Scale amount based on available capital (need current_price, estimate from coins if available)
+        # For random bot, we'll use a simple scaling without price since we don't have it in this method
+        # The scaling will happen in the run loop when we have the price
         return {'action': action, 'amount': amount}
     
     def _analyze_momentum(self, coins: List[float], current_price: float) -> Dict:
@@ -320,9 +357,13 @@ class Bot:
             return {'action': 'hold', 'amount': 0.0}
         
         if short_ma > long_ma * (1.0 + threshold):
-            return {'action': 'buy', 'amount': amount}
+            # Scale buy amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'buy')
+            return {'action': 'buy', 'amount': scaled_amount}
         elif short_ma < long_ma * (1.0 - threshold):
-            return {'action': 'sell', 'amount': amount}
+            # Scale sell amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'sell')
+            return {'action': 'sell', 'amount': scaled_amount}
         
         return {'action': 'hold', 'amount': 0.0}
     
@@ -356,9 +397,13 @@ class Bot:
             return {'action': 'hold', 'amount': 0.0}
         
         if z_score > threshold:
-            return {'action': 'sell', 'amount': amount}
+            # Scale sell amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'sell')
+            return {'action': 'sell', 'amount': scaled_amount}
         elif z_score < -threshold:
-            return {'action': 'buy', 'amount': amount}
+            # Scale buy amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'buy')
+            return {'action': 'buy', 'amount': scaled_amount}
         
         return {'action': 'hold', 'amount': 0.0}
     
@@ -388,9 +433,13 @@ class Bot:
             return {'action': 'hold', 'amount': 0.0}
         
         if current_ratio < target_ratio - threshold:
-            return {'action': 'buy', 'amount': amount}
+            # Scale buy amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'buy')
+            return {'action': 'buy', 'amount': scaled_amount}
         elif current_ratio > target_ratio + threshold:
-            return {'action': 'sell', 'amount': amount}
+            # Scale sell amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'sell')
+            return {'action': 'sell', 'amount': scaled_amount}
         
         return {'action': 'hold', 'amount': 0.0}
     
@@ -445,9 +494,13 @@ class Bot:
             return {'action': 'hold', 'amount': 0.0}
         
         if current_ratio < target_ratio - rebalance_threshold:
-            return {'action': 'buy', 'amount': amount}
+            # Scale buy amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'buy')
+            return {'action': 'buy', 'amount': scaled_amount}
         elif current_ratio > target_ratio + rebalance_threshold:
-            return {'action': 'sell', 'amount': amount}
+            # Scale sell amount based on available capital
+            scaled_amount = self._scale_trade_amount(amount, current_price, 'sell')
+            return {'action': 'sell', 'amount': scaled_amount}
         
         return {'action': 'hold', 'amount': 0.0}
     
@@ -524,8 +577,8 @@ class Bot:
                 amount = float(result['amount'])
                 if amount < 0:
                     amount = 0.0
-                # Clamp to reasonable range
-                amount = min(max(amount, 0.0), 10.0)
+                # Clamp to reasonable range (increased to allow larger trades - 20x scale)
+                amount = min(max(amount, 0.0), 1000.0)
             except (ValueError, TypeError):
                 print(f"Error: invalid amount '{result['amount']}'")
                 return {'action': 'hold', 'amount': 0.0}
@@ -560,9 +613,9 @@ class Bot:
         if self.usd < cost:
             return False
         
-        # Update bot wallet
-        self.usd -= cost
-        self.bc += amount
+        # Update bot wallet - prevent negative balances
+        self.usd = max(0.0, self.usd - cost)
+        self.bc = max(0.0, self.bc + amount)
         
         # Update game totals (market supplies) - convert from string if needed
         total_bc = float(game_data.get('totalBc', 0.0))
@@ -577,14 +630,15 @@ class Bot:
                 player_id = player.get('userId') or player.get('playerId')
                 if player_id == user_id:
                     # Bot's earnings go to the user (update both field name conventions)
+                    # Prevent negative balances
                     if 'coins' in player:
-                        player['coins'] = player.get('coins', 0.0) + amount
+                        player['coins'] = max(0.0, player.get('coins', 0.0) + amount)
                     if 'coinBalance' in player:
-                        player['coinBalance'] = player.get('coinBalance', 0.0) + amount
+                        player['coinBalance'] = max(0.0, player.get('coinBalance', 0.0) + amount)
                     if 'usd' in player:
-                        player['usd'] = player.get('usd', 0.0) - cost
+                        player['usd'] = max(0.0, player.get('usd', 0.0) - cost)
                     if 'usdBalance' in player:
-                        player['usdBalance'] = player.get('usdBalance', 0.0) - cost
+                        player['usdBalance'] = max(0.0, player.get('usdBalance', 0.0) - cost)
                     break
         
         # Get game_id from game_data (need to extract it)
@@ -631,9 +685,9 @@ class Bot:
         
         revenue = amount * price
         
-        # Update bot wallet
-        self.bc -= amount
-        self.usd += revenue
+        # Update bot wallet - prevent negative balances
+        self.bc = max(0.0, self.bc - amount)
+        self.usd = max(0.0, self.usd + revenue)
         
         # Update game totals (market supplies) - convert from string if needed
         total_bc = float(game_data.get('totalBc', 0.0))
@@ -648,14 +702,15 @@ class Bot:
                 player_id = player.get('userId') or player.get('playerId')
                 if player_id == user_id:
                     # Bot's earnings go to the user (update both field name conventions)
+                    # Prevent negative balances
                     if 'coins' in player:
-                        player['coins'] = player.get('coins', 0.0) - amount
+                        player['coins'] = max(0.0, player.get('coins', 0.0) - amount)
                     if 'coinBalance' in player:
-                        player['coinBalance'] = player.get('coinBalance', 0.0) - amount
+                        player['coinBalance'] = max(0.0, player.get('coinBalance', 0.0) - amount)
                     if 'usd' in player:
-                        player['usd'] = player.get('usd', 0.0) + revenue
+                        player['usd'] = max(0.0, player.get('usd', 0.0) + revenue)
                     if 'usdBalance' in player:
-                        player['usdBalance'] = player.get('usdBalance', 0.0) + revenue
+                        player['usdBalance'] = max(0.0, player.get('usdBalance', 0.0) + revenue)
                     break
         
         # Get game_id from game_data (need to extract it)
@@ -833,6 +888,11 @@ class Bot:
                 
                 # Execute trade if decision is not 'hold'
                 if decision['action'] != 'hold' and decision['amount'] > 0:
+                    # Scale trade amount for random bot (other bots already scaled in their analyze methods)
+                    if self.bot_type == 'random':
+                        scaled_amount = self._scale_trade_amount(decision['amount'], current_price, decision['action'])
+                        decision['amount'] = scaled_amount
+                    
                     # Load game data for trade execution
                     game_data = self._get_game_data_from_redis(game_id)
                     if game_data:

@@ -76,6 +76,11 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [isEventActive, setIsEventActive] = useState<boolean>(false);
   const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
   const eventTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const genericNewsTimerRef = useRef<NodeJS.Timeout | null>(null);
+  const genericNewsIndexRef = useRef<number>(0);
+  const allGenericNewsRef = useRef<string[]>([]);
+  const isEventActiveRef = useRef<boolean>(false);
+  const currentIntervalRef = useRef<number>(20000); // Track current interval
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
@@ -87,10 +92,14 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   useEffect(() => {
     // If event just triggered (new event), start the timer
     if (game.eventTriggered && !previousEventTriggered) {
-      // Clear any existing timer
+      // Clear any existing timers (both event timer and generic news rotation)
       if (eventTimerRef.current) {
         clearTimeout(eventTimerRef.current);
         eventTimerRef.current = null;
+      }
+      if (genericNewsTimerRef.current) {
+        clearInterval(genericNewsTimerRef.current);
+        genericNewsTimerRef.current = null;
       }
 
       // Event just triggered!
@@ -98,23 +107,56 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       const newText = game.eventTitle || "MARKET EVENT";
       setNewsText(newText);
       setIsEventActive(true);
+      isEventActiveRef.current = true;
 
-      // Return to "NO NEWS" after 30 seconds
+      // Set a fallback timer (10 seconds) in case backend doesn't reset in time
+      // But we'll also check backend state on each poll
       eventTimerRef.current = setTimeout(() => {
-        setNewsText("NO NEWS");
-        setIsEventActive(false);
-        setPreviousEventTriggered(false); // Reset for next event
-      }, 30000);
+        // Only use timeout if backend still shows event as active
+        // Otherwise, backend already cleared it and we should respect that
+        if (isEventActiveRef.current) {
+          const allGenericNews = (game as any).allGenericNews;
+          if (allGenericNews && Array.isArray(allGenericNews) && allGenericNews.length > 0) {
+            genericNewsIndexRef.current = 0;
+            setNewsText(allGenericNews[0]);
+          } else {
+            const genericNews = (game as any).genericNews || "NO NEWS";
+            setNewsText(genericNews);
+          }
+          setIsEventActive(false);
+          setPreviousEventTriggered(false); // Reset for next event
+          isEventActiveRef.current = false;
+        }
+      }, 10000);
     }
 
-    // If event was cleared from backend before timer expired, reset immediately
-    if (!game.eventTriggered && previousEventTriggered && eventTimerRef.current) {
-      clearTimeout(eventTimerRef.current);
-      eventTimerRef.current = null;
+    // CRITICAL: If backend cleared event_triggered, immediately reset to generic news
+    // This is the primary mechanism - backend controls the timeout
+    if (!game.eventTriggered && previousEventTriggered) {
+      // Clear the frontend timeout since backend already cleared the event
+      if (eventTimerRef.current) {
+        clearTimeout(eventTimerRef.current);
+        eventTimerRef.current = null;
+      }
+      
+      // Reset to generic news immediately
       setPreviousEventTriggered(false);
-      setNewsText("NO NEWS");
       setIsEventActive(false);
+      isEventActiveRef.current = false;
+      
+      // Set initial generic news - rotation will be handled by the generic news effect
+      const allGenericNews = (game as any).allGenericNews;
+      if (allGenericNews && Array.isArray(allGenericNews) && allGenericNews.length > 0) {
+        genericNewsIndexRef.current = 0;
+        setNewsText(allGenericNews[0]);
+      } else {
+        const genericNews = (game as any).genericNews || "NO NEWS";
+        setNewsText(genericNews);
+      }
     }
+
+    // Note: Generic news handling is now in a separate useEffect below
+    // This keeps the event logic separate from generic news logic
 
     // Cleanup on unmount
     return () => {
@@ -123,14 +165,115 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         eventTimerRef.current = null;
       }
     };
-  }, [game.eventTriggered, previousEventTriggered, game.eventTitle]);
+  }, [game.eventTriggered, previousEventTriggered, game.eventTitle, (game as any).genericNews]);
 
-  // Ensure newsText always has a value (defensive check)
+  // Effect: Set generic news when it becomes available and rotate every 10 seconds
+  // This should work BEFORE events (when no event has triggered) and AFTER events (when event clears)
   useEffect(() => {
-    if (!newsText || newsText.trim() === '') {
-      setNewsText("NO NEWS");
+    const allGenericNews = (game as any).allGenericNews;
+    
+    // Check if headlines have actually changed by comparing stringified arrays
+    const newHeadlinesStr = allGenericNews && Array.isArray(allGenericNews) 
+      ? JSON.stringify(allGenericNews) 
+      : '';
+    const oldHeadlinesStr = JSON.stringify(allGenericNewsRef.current);
+    const headlinesChanged = newHeadlinesStr !== oldHeadlinesStr;
+    
+    // Set up generic news rotation when:
+    // 1. No event is currently triggered (from backend)
+    // 2. No event is active locally (not showing event news)
+    // This allows rotation both before events and after events clear
+    if (!game.eventTriggered && !isEventActive) {
+      if (allGenericNews && Array.isArray(allGenericNews) && allGenericNews.length > 0) {
+        // Update ref with new headlines
+        allGenericNewsRef.current = allGenericNews;
+        
+        // Only clear and recreate interval if:
+        // 1. Headlines actually changed (content changed)
+        // 2. No interval exists yet (first time setup)
+        // 3. Event state changed (event just cleared)
+        if (headlinesChanged || !genericNewsTimerRef.current) {
+          // Clear existing timer if it exists
+          if (genericNewsTimerRef.current) {
+            clearInterval(genericNewsTimerRef.current);
+            genericNewsTimerRef.current = null;
+          }
+          
+          // If headlines changed, reset index and update display
+          if (headlinesChanged) {
+            genericNewsIndexRef.current = 0;
+            setNewsText(allGenericNews[0]);
+          } else {
+            // Validate current index and newsText
+            const currentIndex = genericNewsIndexRef.current;
+            if (currentIndex >= allGenericNews.length || currentIndex < 0) {
+              genericNewsIndexRef.current = 0;
+              setNewsText(allGenericNews[0]);
+            } else if (!newsText || newsText === "NO NEWS" || !allGenericNews.includes(newsText)) {
+              // If current text is invalid or not in the list, reset to first headline
+              genericNewsIndexRef.current = 0;
+              setNewsText(allGenericNews[0]);
+            }
+          }
+          
+          // Rotate through headlines - slower normally (20s), faster during events (3s)
+          // Use refs to check current state in interval callback (avoids stale closures)
+          const getRotationInterval = () => {
+            // Speed up during events, slow down normally
+            return isEventActiveRef.current ? 3000 : 20000; // 3s during events, 20s normally
+          };
+          
+          // Set up rotation with dynamic interval
+          const rotateNews = () => {
+            if (allGenericNewsRef.current.length > 0) {
+              // Ensure index is valid
+              if (genericNewsIndexRef.current >= allGenericNewsRef.current.length) {
+                genericNewsIndexRef.current = 0;
+              }
+              genericNewsIndexRef.current = (genericNewsIndexRef.current + 1) % allGenericNewsRef.current.length;
+              setNewsText(allGenericNewsRef.current[genericNewsIndexRef.current]);
+              
+              // Check if interval needs to change based on event state
+              const newInterval = getRotationInterval();
+              if (newInterval !== currentIntervalRef.current) {
+                // Clear and recreate with new interval
+                if (genericNewsTimerRef.current) {
+                  clearInterval(genericNewsTimerRef.current);
+                }
+                currentIntervalRef.current = newInterval;
+                genericNewsTimerRef.current = setInterval(rotateNews, currentIntervalRef.current);
+              }
+            }
+          };
+          
+          // Start with initial interval
+          currentIntervalRef.current = getRotationInterval();
+          genericNewsTimerRef.current = setInterval(rotateNews, currentIntervalRef.current);
+        }
+      } else {
+        // Fallback to single generic news if array not available
+        // Clear rotation timer since we don't have headlines to rotate
+        if (genericNewsTimerRef.current) {
+          clearInterval(genericNewsTimerRef.current);
+          genericNewsTimerRef.current = null;
+        }
+        const genericNews = (game as any).genericNews;
+        if (genericNews && genericNews.trim() !== '') {
+          setNewsText(genericNews);
+        }
+      }
+    } else if (game.eventTriggered || isEventActive) {
+      // When event is active, continue rotation but at faster speed
+      // The rotation interval will automatically adjust via the dynamic interval check
+      // Don't stop rotation - let it speed up during events
     }
-  }, [newsText]);
+    
+    // Cleanup on unmount
+    return () => {
+      // Only cleanup on unmount or when event state changes
+      // Don't cleanup on every render to avoid interrupting rotation
+    };
+  }, [(game as any).allGenericNews, (game as any).genericNews, game.eventTriggered, isEventActive]);
 
   // Calculate current user's total trades (their own + their bots' trades)
   const currentUserName = currentUser.userName || currentUser.playerName;
@@ -229,6 +372,16 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       // Get last interaction time and value for current user
       const lastInteractionTime = currentUser.lastInteractionTime || currentUser.lastInteractionT;
       const lastInteractionValue = currentUser.lastInteractionValue || currentUser.lastInteractionV || 0;
+      
+      // Get current coin balance (before rot is applied)
+      const rawCoins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
+      
+      // Reset rot if coins reach 0
+      if (rawCoins <= 0) {
+        setRotMultiplier(1.0);
+        setRotLevel(0);
+        return;
+      }
 
       if (!lastInteractionTime) {
         // No trades yet, coins are fresh
@@ -256,8 +409,8 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       // Calculate dynamic cooldown based on trade size
       // Larger trades (higher tick values) = longer cooldown (more protection)
       // Formula: cooldown = minCooldown + (maxCooldown - minCooldown) * (tradeSize / (tradeSize + scaleFactor))
-      const MIN_COOLDOWN = 1.0;   // Minimum 1 second cooldown
-      const MAX_COOLDOWN = 7.5;   // Maximum 7.5 seconds cooldown
+      const MIN_COOLDOWN = 20.0;   // Minimum 60 seconds (1 minute) cooldown before rot starts
+      const MAX_COOLDOWN = 40.0;   // Maximum 90 seconds cooldown (larger trades get more protection)
       const COOLDOWN_SCALE = 100; // Adjust sensitivity (lower = faster growth)
       
       const cooldownSeconds = MIN_COOLDOWN + (MAX_COOLDOWN - MIN_COOLDOWN) * (tradeSize / (tradeSize + COOLDOWN_SCALE));
@@ -276,8 +429,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       // Calculate decay coefficient based on trade size
       // Larger trades = slower decay (reward large trades)
       // Formula: coefficient = minCoeff + (maxCoeff - minCoeff) / (1 + tradeSize/scaleFactor)
-      const MIN_COEFF = 0.02;  // Slowest decay for large trades
-      const MAX_COEFF = 0.08;  // Fastest decay for tiny trades
+      // Reduced coefficients to make rotting slower overall
+      const MIN_COEFF = 0.005;  // Slowest decay for large trades (reduced from 0.02)
+      const MAX_COEFF = 0.02;  // Fastest decay for tiny trades (reduced from 0.08)
       const DECAY_SCALE = 100; // Adjust this to tune sensitivity
       
       const coefficient = MIN_COEFF + (MAX_COEFF - MIN_COEFF) / (1 + tradeSize / DECAY_SCALE);
@@ -377,8 +531,20 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   // --- Wallet Data ---
   const usd = typeof currentUser.usd === "number" ? currentUser.usd : 0;
   const rawCoins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
-  const coins = rawCoins * rotMultiplier; // Apply rot decay
+  const coins = Math.max(0, rawCoins * rotMultiplier); // Apply rot decay, prevent negative values
   const minions = Array.isArray(currentUser.bots) ? currentUser.bots : [];
+  
+  // Calculate total minion balances (USD + BC)
+  const totalMinionUsd = minions.reduce((sum, minion: any) => {
+    return sum + (typeof minion.usdBalance === 'number' ? minion.usdBalance : 0);
+  }, 0);
+  const totalMinionCoins = minions.reduce((sum, minion: any) => {
+    return sum + (typeof minion.coinBalance === 'number' ? Math.max(0, minion.coinBalance) : 0);
+  }, 0);
+  
+  // Combined balances (user + minions)
+  const totalUsd = usd + totalMinionUsd;
+  const totalCoins = coins + totalMinionCoins;
 
   // Banana rot color mapping
   const getRotColor = (level: number): { bg: string; border: string; text: string } => {
@@ -554,7 +720,8 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   }), [gridMin, gridMax, gridStep]);
 
   // --- Portfolio Stats ---
-  const portfolioValue = usd + coins * currentPrice;
+  // Include minion balances in portfolio value
+  const portfolioValue = totalUsd + totalCoins * currentPrice;
   const portfolioChange = ((portfolioValue - 10000) / 10000) * 100;
 
   return (
@@ -639,14 +806,24 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
               <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
                 <div className="text-sm text-[var(--primary)]">US Dollars</div>
                 <div className="font-retro text-2xl text-[var(--success)]">
-                  ${usd.toFixed(2)}
+                  ${totalUsd.toFixed(2)}
                 </div>
+                {totalMinionUsd > 0 && (
+                  <div className="text-xs text-[var(--primary)] mt-1">
+                    (You: ${usd.toFixed(2)} + Minions: ${totalMinionUsd.toFixed(2)})
+                  </div>
+                )}
               </div>
               <div className={`p-3 border-2 transition-colors duration-500 ${rotColors.bg} ${rotColors.border}`}>
                 <div className="text-sm text-[var(--primary)]">Banana Coins</div>
                 <div className={`font-retro text-2xl transition-colors duration-500 ${rotColors.text}`}>
-                  {coins.toFixed(2)} BC
+                  {totalCoins.toFixed(2)} BC
                 </div>
+                {totalMinionCoins > 0 && (
+                  <div className="text-xs text-[var(--primary)] mt-1">
+                    (You: {coins.toFixed(2)} + Minions: {totalMinionCoins.toFixed(2)})
+                  </div>
+                )}
               </div>
             </div>
           </Card>
@@ -712,20 +889,26 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 {minions.map((minion: any) => {
                   const isActive = minion.isActive ?? false;
                   const minionId = minion.botId ?? '';
-                  const coinBalance = typeof minion.coinBalance === 'number' ? minion.coinBalance : 0;
+                  const coinBalance = Math.max(0, typeof minion.coinBalance === 'number' ? minion.coinBalance : 0);
+                  const usdBalance = typeof minion.usdBalance === 'number' ? minion.usdBalance : 0;
 
-                  // Calculate performance based on BC holdings value change
-                  const currentValue = coinBalance * currentPrice;
+                  // Calculate performance based on total portfolio value (USD + BC value)
+                  // Bots start with USD capital, not BC, so we need to track total portfolio value
+                  const currentValue = (coinBalance * currentPrice) + usdBalance;
 
-                  // Estimate bot's starting value from its purchase price
-                  // Bots start with their cost converted to BC at the price when purchased
+                  // Use actual starting USD balance if available (this is what the bot actually started with)
+                  // Bots are allocated a percentage of their purchase price as starting capital
+                  const startingUsdBalance = typeof minion.startingUsdBalance === 'number' ? minion.startingUsdBalance : 0;
+                  
+                  // Fallback: if startingUsdBalance is not available, estimate from bot cost
+                  // (bots are allocated 70% of purchase price as starting capital)
                   const botName = minion.botName ?? "";
                   const baseBotName = botName.replace(/\s+\d+$/, ""); // Remove number suffix
                   const botCost = BOT_PRICES[baseBotName] || BOT_PRICES[botName] || 1000;
-
-                  // Use stored initial BC if available, otherwise estimate
-                  const initialBC = minion.initialCoinBalance || (botCost / (coinsArr[0] || 1));
-                  const initialValue = initialBC * (coinsArr[0] || 1);
+                  const estimatedStartingCapital = startingUsdBalance > 0 ? startingUsdBalance : (botCost * 0.7);
+                  
+                  // Initial value is the starting USD capital (bot starts with USD, not BC)
+                  const initialValue = estimatedStartingCapital;
 
                   // Calculate performance
                   const valueChange = currentValue - initialValue;
@@ -771,7 +954,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span>BC Value:</span>
+                          <span>Portfolio Value:</span>
                           <span className="text-[var(--success)]">
                             ${currentValue.toFixed(2)}
                           </span>
@@ -824,7 +1007,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 {leaderboard.map((entry, index) => {
                   const isCurrentUser = entry.userId === currentUser.userId;
                   // Recalculate wealth in real-time using current price
-                  const liveWealth = entry.usdBalance + (entry.coinBalance * currentPrice);
+                  const liveWealth = entry.usdBalance + (Math.max(0, entry.coinBalance) * currentPrice);
 
                   return (
                     <div

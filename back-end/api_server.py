@@ -316,6 +316,8 @@ async def get_market_data(game_id: str, history_limit: int = 100):
     """
     Get current market data including price history.
     """
+    from news_helper import get_random_generic_news, load_generic_news
+    
     market = Market.load_from_redis(game_id)
     
     if not market:
@@ -323,6 +325,14 @@ async def get_market_data(game_id: str, history_limit: int = 100):
     
     # Get recent price history
     price_history = market.market_data.price_history[-history_limit:] if len(market.market_data.price_history) > history_limit else market.market_data.price_history
+    
+    # Get generic news if no event is triggered
+    # Always provide generic news - it will be shown when event is not active
+    generic_news = get_random_generic_news() if not market.event_triggered else get_random_generic_news()
+    
+    # Also provide all headlines for client-side rotation
+    # Create a new list to ensure fresh data and avoid reference issues
+    all_headlines = list(load_generic_news())  # Create new list instance
     
     return {
         "gameId": game_id,
@@ -336,7 +346,9 @@ async def get_market_data(game_id: str, history_limit: int = 100):
         "eventTick": market.event_tick,
         "eventTime": market.event_time.isoformat(),
         "eventTitle": market.event_title,
-        "eventTriggered": market.event_triggered
+        "eventTriggered": market.event_triggered,
+        "genericNews": generic_news,
+        "allGenericNews": all_headlines  # All headlines for rotation
     }
 
 
@@ -344,188 +356,244 @@ async def get_market_data(game_id: str, history_limit: int = 100):
 async def buy_coins(request: TradeRequest):
     """
     Execute a buy trade for a user.
+    Retries until success if transaction fails.
     """
     if request.action != "buy":
         raise HTTPException(status_code=400, detail="Use sell-coins endpoint for sell trades")
     
-    # Load market to get current price
-    market = Market.load_from_redis(request.gameId)
-    if not market:
-        raise HTTPException(status_code=404, detail="Market not found")
+    # Retry loop - keep trying until transaction succeeds
+    max_retries = 100  # Prevent infinite loops
+    retry_count = 0
     
-    current_price = market.market_data.current_price
-    
-    # Get user wallet from Redis (using existing front-end structure)
-    try:
-        r = get_redis_connection()
-        game_data = r.hgetall(f"game:{request.gameId}")
-        
-        if not game_data:
-            raise HTTPException(status_code=404, detail="Game not found")
-        
-        import json
-        players = json.loads(game_data.get('players', '[]'))
-        
-        # Find the user
-        user_data = None
-        user_index = None
-        for i, player in enumerate(players):
-            if player['userId'] == request.userId:
-                user_data = player
-                user_index = i
-                break
-        
-        if not user_data:
-            raise HTTPException(status_code=404, detail="User not found in game")
-        
-        # Calculate trade
-        cost = request.amount * current_price
-        
-        if user_data['usd'] < cost:
-            raise HTTPException(status_code=400, detail="Insufficient USD")
-        
-        # Execute trade
-        user_data['usd'] -= cost
-        user_data['coins'] += request.amount
-        user_data['lastInteractionT'] = datetime.now().isoformat()
-        user_data['lastInteractionV'] = market.current_tick
-        
-        # Update market supplies
-        market.dollar_supply += cost
-        market.bc_supply -= request.amount
-        market.save_to_redis()
-        
-        # Update user in Redis
-        players[user_index] = user_data
-        r.hset(f"game:{request.gameId}", "players", json.dumps(players))
-        
-        # NOTE: Removed interactions counter - using TransactionHistory instead
-        # ⚠️ DO NOT write to 'interactions' field here - it's now an ARRAY maintained by TransactionHistory
-        # The old code was overwriting the array with an integer, destroying all transaction history!
-        
-        # Record transaction in history
-        TransactionHistory.add_transaction(request.gameId, {
-            'type': 'buy',
-            'actor': request.userId,
-            'actor_name': user_data.get('userName', user_data.get('playerName', 'Unknown')),
-            'amount': request.amount,
-            'price': current_price,
-            'total_cost': cost,
-            'timestamp': datetime.now().isoformat(),
-            'is_bot': False
-        })
-        
-        logger.info(f"User {request.userId} bought {request.amount} BC for ${cost:.2f}")
-        
-        return {
-            "success": True,
-            "action": "buy",
-            "amount": request.amount,
-            "cost": cost,
-            "price": current_price,
-            "newUsd": user_data['usd'],
-            "newCoins": user_data['coins']
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error executing buy trade: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    while retry_count < max_retries:
+        try:
+            # Load market to get current price (reload each retry to get fresh price)
+            market = Market.load_from_redis(request.gameId)
+            if not market:
+                raise HTTPException(status_code=404, detail="Market not found")
+            
+            current_price = market.market_data.current_price
+            
+            # Get user wallet from Redis (using existing front-end structure)
+            r = get_redis_connection()
+            game_data = r.hgetall(f"game:{request.gameId}")
+            
+            if not game_data:
+                raise HTTPException(status_code=404, detail="Game not found")
+            
+            import json
+            players = json.loads(game_data.get('players', '[]'))
+            
+            # Find the user
+            user_data = None
+            user_index = None
+            for i, player in enumerate(players):
+                if player['userId'] == request.userId:
+                    user_data = player
+                    user_index = i
+                    break
+            
+            if not user_data:
+                raise HTTPException(status_code=404, detail="User not found in game")
+            
+            # Calculate trade
+            cost = request.amount * current_price
+            
+            # Check for sufficient funds - silently fail if insufficient (don't raise exception)
+            if user_data['usd'] < cost:
+                return {
+                    "success": False,
+                    "message": "Insufficient USD",
+                    "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
+                    "newCoins": user_data.get('coins', user_data.get('coinBalance', 0))
+                }
+            
+            # Execute trade - prevent negative balances
+            user_data['usd'] = max(0.0, user_data['usd'] - cost)
+            user_data['coins'] = max(0.0, user_data['coins'] + request.amount)
+            user_data['lastInteractionT'] = datetime.now().isoformat()
+            user_data['lastInteractionV'] = market.current_tick
+            
+            # Update market supplies
+            market.dollar_supply += cost
+            market.bc_supply -= request.amount
+            market.save_to_redis()
+            
+            # Update user in Redis
+            players[user_index] = user_data
+            r.hset(f"game:{request.gameId}", "players", json.dumps(players))
+            
+            # NOTE: Removed interactions counter - using TransactionHistory instead
+            # ⚠️ DO NOT write to 'interactions' field here - it's now an ARRAY maintained by TransactionHistory
+            # The old code was overwriting the array with an integer, destroying all transaction history!
+            
+            # Record transaction in history
+            TransactionHistory.add_transaction(request.gameId, {
+                'type': 'buy',
+                'actor': request.userId,
+                'actor_name': user_data.get('userName', user_data.get('playerName', 'Unknown')),
+                'amount': request.amount,
+                'price': current_price,
+                'total_cost': cost,
+                'timestamp': datetime.now().isoformat(),
+                'is_bot': False
+            })
+            
+            logger.info(f"User {request.userId} bought {request.amount} BC for ${cost:.2f} (attempt {retry_count + 1})")
+            
+            return {
+                "success": True,
+                "action": "buy",
+                "amount": request.amount,
+                "cost": cost,
+                "price": current_price,
+                "newUsd": user_data['usd'],
+                "newCoins": user_data['coins']
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                logger.error(f"Error executing buy trade after {max_retries} retries: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+            # Wait a short time before retrying (exponential backoff)
+            import asyncio
+            await asyncio.sleep(0.1 * retry_count)  # 0.1s, 0.2s, 0.3s, etc.
+            logger.warning(f"Buy trade failed, retrying ({retry_count}/{max_retries}): {e}")
+            continue
 
 
 @app.post("/api/game/sell-coins")
 async def sell_coins(request: TradeRequest):
     """
     Execute a sell trade for a user.
+    Retries until success if transaction fails.
+    If trying to sell more than available, sells all available coins.
     """
     if request.action != "sell":
         raise HTTPException(status_code=400, detail="Use buy-coins endpoint for buy trades")
     
-    # Load market to get current price
-    market = Market.load_from_redis(request.gameId)
-    if not market:
-        raise HTTPException(status_code=404, detail="Market not found")
+    # Retry loop - keep trying until transaction succeeds
+    max_retries = 100  # Prevent infinite loops
+    retry_count = 0
     
-    current_price = market.market_data.current_price
-    
-    # Get user wallet from Redis
-    try:
-        r = get_redis_connection()
-        game_data = r.hgetall(f"game:{request.gameId}")
-        
-        if not game_data:
-            raise HTTPException(status_code=404, detail="Game not found")
-        
-        import json
-        players = json.loads(game_data.get('players', '[]'))
-        
-        # Find the user
-        user_data = None
-        user_index = None
-        for i, player in enumerate(players):
-            if player['userId'] == request.userId:
-                user_data = player
-                user_index = i
-                break
-        
-        if not user_data:
-            raise HTTPException(status_code=404, detail="User not found in game")
-        
-        # Calculate trade
-        revenue = request.amount * current_price
-        
-        if user_data['coins'] < request.amount:
-            raise HTTPException(status_code=400, detail="Insufficient BC")
-        
-        # Execute trade
-        user_data['coins'] -= request.amount
-        user_data['usd'] += revenue
-        user_data['lastInteractionT'] = datetime.now().isoformat()
-        user_data['lastInteractionV'] = market.current_tick
-        
-        # Update market supplies
-        market.dollar_supply -= revenue
-        market.bc_supply += request.amount
-        market.save_to_redis()
-        
-        # Update user in Redis
-        players[user_index] = user_data
-        r.hset(f"game:{request.gameId}", "players", json.dumps(players))
-        
-        # NOTE: Removed interactions counter - using TransactionHistory instead
-        # ⚠️ DO NOT write to 'interactions' field here - it's now an ARRAY maintained by TransactionHistory
-        # The old code was overwriting the array with an integer, destroying all transaction history!
-        
-        # Record transaction in history
-        TransactionHistory.add_transaction(request.gameId, {
-            'type': 'sell',
-            'actor': request.userId,
-            'actor_name': user_data.get('userName', user_data.get('playerName', 'Unknown')),
-            'amount': request.amount,
-            'price': current_price,
-            'total_cost': revenue,
-            'timestamp': datetime.now().isoformat(),
-            'is_bot': False
-        })
-        
-        logger.info(f"User {request.userId} sold {request.amount} BC for ${revenue:.2f}")
-        
-        return {
-            "success": True,
-            "action": "sell",
-            "amount": request.amount,
-            "revenue": revenue,
-            "price": current_price,
-            "newUsd": user_data['usd'],
-            "newCoins": user_data['coins']
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error executing sell trade: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+    while retry_count < max_retries:
+        try:
+            # Load market to get current price (reload each retry to get fresh price)
+            market = Market.load_from_redis(request.gameId)
+            if not market:
+                raise HTTPException(status_code=404, detail="Market not found")
+            
+            current_price = market.market_data.current_price
+            
+            # Get user wallet from Redis
+            r = get_redis_connection()
+            game_data = r.hgetall(f"game:{request.gameId}")
+            
+            if not game_data:
+                raise HTTPException(status_code=404, detail="Game not found")
+            
+            import json
+            players = json.loads(game_data.get('players', '[]'))
+            
+            # Find the user (handle both userId and playerId fields)
+            user_data = None
+            user_index = None
+            for i, player in enumerate(players):
+                # Check both userId and playerId fields for compatibility
+                player_id = player.get('userId') or player.get('playerId')
+                if player_id == request.userId:
+                    user_data = player
+                    user_index = i
+                    break
+            
+            if not user_data:
+                raise HTTPException(status_code=404, detail="User not found in game")
+            
+            # Check balance (handle both field name conventions)
+            user_coins = user_data.get('coins', user_data.get('coinBalance', 0))
+            
+            # If trying to sell more than available, sell all available coins
+            actual_amount = min(request.amount, user_coins)
+            
+            if actual_amount <= 0:
+                return {
+                    "success": False,
+                    "message": "No BC to sell",
+                    "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
+                    "newCoins": user_data.get('coins', user_data.get('coinBalance', 0))
+                }
+            
+            # Recalculate revenue with actual amount
+            revenue = actual_amount * current_price
+            
+            # Execute trade (update both field name conventions) - prevent negative balances
+            if 'coins' in user_data:
+                user_data['coins'] = max(0.0, user_data['coins'] - actual_amount)
+            if 'coinBalance' in user_data:
+                user_data['coinBalance'] = max(0.0, user_data.get('coinBalance', 0) - actual_amount)
+            
+            if 'usd' in user_data:
+                user_data['usd'] = max(0.0, user_data.get('usd', 0) + revenue)
+            if 'usdBalance' in user_data:
+                user_data['usdBalance'] = max(0.0, user_data.get('usdBalance', 0) + revenue)
+            
+            user_data['lastInteractionT'] = datetime.now().isoformat()
+            user_data['lastInteractionV'] = market.current_tick
+            user_data['lastInteractionTime'] = user_data['lastInteractionT']
+            user_data['lastInteractionValue'] = actual_amount
+            
+            # Update market supplies (use actual_amount, not request.amount)
+            market.dollar_supply -= revenue
+            market.bc_supply += actual_amount
+            market.save_to_redis()
+            
+            # Update user in Redis
+            players[user_index] = user_data
+            r.hset(f"game:{request.gameId}", "players", json.dumps(players))
+            
+            # NOTE: Removed interactions counter - using TransactionHistory instead
+            # ⚠️ DO NOT write to 'interactions' field here - it's now an ARRAY maintained by TransactionHistory
+            # The old code was overwriting the array with an integer, destroying all transaction history!
+            
+            # Record transaction in history (use actual_amount)
+            TransactionHistory.add_transaction(request.gameId, {
+                'type': 'sell',
+                'actor': request.userId,
+                'actor_name': user_data.get('userName', user_data.get('playerName', 'Unknown')),
+                'amount': actual_amount,
+                'price': current_price,
+                'total_cost': revenue,
+                'timestamp': datetime.now().isoformat(),
+                'is_bot': False
+            })
+            
+            logger.info(f"User {request.userId} sold {actual_amount} BC for ${revenue:.2f} (requested {request.amount}, attempt {retry_count + 1})")
+            
+            return {
+                "success": True,
+                "action": "sell",
+                "amount": actual_amount,
+                "revenue": revenue,
+                "price": current_price,
+                "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
+                "newCoins": user_data.get('coins', user_data.get('coinBalance', 0))
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                logger.error(f"Error executing sell trade after {max_retries} retries: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+            # Wait a short time before retrying (exponential backoff)
+            import asyncio
+            await asyncio.sleep(0.1 * retry_count)  # 0.1s, 0.2s, 0.3s, etc.
+            logger.warning(f"Sell trade failed, retrying ({retry_count}/{max_retries}): {e}")
+            continue
 
 
 @app.post("/api/bot/buy")
@@ -591,11 +659,11 @@ async def buy_bot(request: BotBuyRequest):
                 logger.error(f"Failed to generate custom strategy: {e}")
                 raise HTTPException(status_code=500, detail=f"Failed to generate custom strategy: {str(e)}")
         
-        # Deduct cost from user FIRST (before minion creation)
+        # Deduct cost from user FIRST (before minion creation) - prevent negative balances
         if 'usd' in user_data:
-            user_data['usd'] -= request.cost
+            user_data['usd'] = max(0.0, user_data['usd'] - request.cost)
         if 'usdBalance' in user_data:
-            user_data['usdBalance'] -= request.cost
+            user_data['usdBalance'] = max(0.0, user_data['usdBalance'] - request.cost)
         
         # Add minion entry to user's bots list
         if 'bots' not in user_data:
@@ -631,11 +699,14 @@ async def buy_bot(request: BotBuyRequest):
         # NOW create the actual minion (this will use the bot_id we generated)
         # Call bot_operations directly but pass the bot_id we already created
         from bot import Bot
+        # Allocate resources: 70% of purchase price as starting capital (increased from 50% for better bot performance)
+        # This gives bots more resources to trade effectively
+        bot_starting_capital = request.cost * 0.7
         bot = Bot(
             bot_id=bot_id,
             is_toggled=True,
-            usd_given=request.cost * 0.2,
-            usd=request.cost * 0.2,
+            usd_given=bot_starting_capital,
+            usd=bot_starting_capital,
             bc=0.0,
             bot_type=backend_bot_type,
             user_id=request.userId,
@@ -776,8 +847,21 @@ async def get_wealth_leaderboard(game_id: str):
         if not players:
             raise HTTPException(status_code=404, detail="No players found in game")
         
-        # Calculate wealth for each player
+        # Calculate wealth for each player (including minion balances)
         player_wealths = []
+        bots_set_key = f"bots:{game_id}"
+        bot_ids = r.smembers(bots_set_key)
+        
+        # Build a map of user_id -> list of bot_ids
+        user_bots_map = {}
+        for bot_id_bytes in bot_ids:
+            bot_id = bot_id_bytes.decode('utf-8') if isinstance(bot_id_bytes, bytes) else bot_id_bytes
+            bot = Bot.load_from_redis(game_id, bot_id)
+            if bot and bot.user_id:
+                if bot.user_id not in user_bots_map:
+                    user_bots_map[bot.user_id] = []
+                user_bots_map[bot.user_id].append(bot)
+        
         for player in players:
             # Handle both field name conventions (userId/playerId, usd/usdBalance, coins/coinBalance)
             player_id = player.get('userId') or player.get('playerId')
@@ -789,14 +873,24 @@ async def get_wealth_leaderboard(game_id: str):
             # Get BC balance (handle both field names)
             bc_balance = float(player.get('coins', player.get('coinBalance', 0)))
             
-            # Calculate wealth: USD + (BC * current_price)
-            wealth = usd_balance + (bc_balance * current_price)
+            # Add minion balances to player's total
+            total_minion_usd = 0.0
+            total_minion_bc = 0.0
+            if player_id in user_bots_map:
+                for bot in user_bots_map[player_id]:
+                    total_minion_usd += bot.usd
+                    total_minion_bc += bot.bc
+            
+            # Calculate total wealth: (player USD + minion USD) + ((player BC + minion BC) * current_price)
+            total_usd = usd_balance + total_minion_usd
+            total_bc = bc_balance + total_minion_bc
+            wealth = total_usd + (total_bc * current_price)
             
             player_wealths.append({
                 'userId': player_id,
                 'userName': player_name,
-                'usdBalance': usd_balance,
-                'coinBalance': bc_balance,
+                'usdBalance': total_usd,  # Include minion balances
+                'coinBalance': total_bc,   # Include minion balances
                 'wealth': wealth
             })
         
