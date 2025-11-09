@@ -16,6 +16,12 @@ Copy from `example.env`.
 - Back‑end: `REDIS_IP`, `REDIS_PORT`, `REDIS_PASSWORD` (optional)
 - Front‑end: `NEXT_PUBLIC_API_BASE`, Firebase client vars
 
+## Redis Setup
+
+You can host your own Redis server and access it through Tailscale for secure remote access. This allows you to run Redis on a separate machine while keeping it accessible only to devices on your Tailscale network.
+
+For additional setup steps, see the [Tailscale documentation on accessing services](https://tailscale.com/kb/1015/100.x-addresses).
+
 ## Setup
 
 - Back‑end
