@@ -121,38 +121,56 @@ export async function GET(
       };
     });
 
-    // ✨ NEW: Get current price and market data from FastAPI if available
-    let currentPrice = parseFloat(gameData.coinPrice || '100');
+    // ✨ NEW: Get current price and market data directly from Redis
+    let currentPrice = parseFloat(gameData.coinPrice || '1.0');
     let priceHistory: number[] = [];
     let volatility = 0;
     let marketActive = false;
     
     try {
-      const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
+      // First, try to read market data directly from Redis (faster and more reliable)
+      const marketDataKey = `market:${gameId}:data`;
+      const marketDataExists = await redis.exists(marketDataKey);
+      
+      if (marketDataExists) {
+        const marketData = await redis.hgetall(marketDataKey);
+        
+        if (marketData && marketData.current_price) {
+          currentPrice = parseFloat(marketData.current_price);
+          priceHistory = JSON.parse(marketData.price_history || '[]');
+          volatility = parseFloat(marketData.volatility || '0');
+          marketActive = true;
+        }
+      }
+      
+      // If Redis market data is not available, try FastAPI as fallback
+      if (!marketActive) {
+        const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
 
-      // Reduced timeout to 200ms for faster polling
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 200);
+        // Reduced timeout to 200ms for faster polling
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 200);
 
-      const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`, {
-        signal: controller.signal,
-        headers: {
-          'Cache-Control': 'no-cache, no-store, must-revalidate',
-        },
-      });
+        const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`, {
+          signal: controller.signal,
+          headers: {
+            'Cache-Control': 'no-cache, no-store, must-revalidate',
+          },
+        });
 
-      clearTimeout(timeoutId);
+        clearTimeout(timeoutId);
 
-      if (marketResponse.ok) {
-        const marketData = await marketResponse.json();
-        currentPrice = marketData.currentPrice;
-        priceHistory = marketData.priceHistory || [];
-        volatility = marketData.volatility || 0;
-        marketActive = true;
+        if (marketResponse.ok) {
+          const marketData = await marketResponse.json();
+          currentPrice = marketData.currentPrice;
+          priceHistory = marketData.priceHistory || [];
+          volatility = marketData.volatility || 0;
+          marketActive = true;
+        }
       }
     } catch (error) {
-      // Continue with static price if FastAPI is not available or times out
-      // Don't log timeout errors to reduce console spam
+      // Continue with static price if market data is not available
+      // Don't log errors to reduce console spam
     }
 
     const parsedData = {

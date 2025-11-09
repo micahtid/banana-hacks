@@ -164,7 +164,7 @@ class Bot:
                  is_toggled: bool = True, usd_given: float = 0.0,
                  usd: float = 0.0, bc: float = 0.0, bot_type: Optional[str] = None,
                  behavior_coefficient: Optional[float] = None, user_id: Optional[str] = None,
-                 custom_strategy_code: Optional[str] = None):
+                 custom_strategy_code: Optional[str] = None, bot_name: Optional[str] = None):
         """
         Initialize a bot
         
@@ -178,6 +178,7 @@ class Bot:
             behavior_coefficient: Bot's behavior coefficient (0.8-1.2). If None, generated from bot_id
             user_id: Owner user ID
             custom_strategy_code: Python code for custom strategy (only used when bot_type='custom')
+            bot_name: Display name for the bot (e.g., 'HODL Master')
         """
         self.bot_id = bot_id or str(uuid.uuid4())
         self.is_toggled = is_toggled
@@ -187,6 +188,7 @@ class Bot:
         self.bot_type = bot_type or 'random'
         self.user_id = user_id
         self.custom_strategy_code = custom_strategy_code
+        self.bot_name = bot_name or f'Bot_{self.bot_id[:8]}'  # Use provided name or generate default
         self.parameters = self._get_default_parameters()
         
         # Bot-specific randomness seed based on bot_id for consistent uniqueness
@@ -595,7 +597,7 @@ class Bot:
             TransactionHistory.add_transaction(game_id, {
                 'type': 'buy',
                 'actor': self.bot_id,
-                'actor_name': f'Bot_{self.bot_id[:8]}',
+                'actor_name': self.bot_name,
                 'amount': amount,
                 'price': price,
                 'total_cost': cost,
@@ -666,7 +668,7 @@ class Bot:
             TransactionHistory.add_transaction(game_id, {
                 'type': 'sell',
                 'actor': self.bot_id,
-                'actor_name': f'Bot_{self.bot_id[:8]}',
+                'actor_name': self.bot_name,
                 'amount': amount,
                 'price': price,
                 'total_cost': revenue,
@@ -691,6 +693,7 @@ class Bot:
                 'usd': str(self.usd),
                 'bc': str(self.bc),
                 'bot_type': self.bot_type,
+                'bot_name': self.bot_name,
                 'behavior_coefficient': str(self.behavior_coefficient),
                 'parameters': json.dumps(self.parameters),
                 'user_id': self.user_id or '',
@@ -749,7 +752,8 @@ class Bot:
                 bot_type=bot_data.get('bot_type', 'random'),
                 behavior_coefficient=behavior_coefficient,
                 user_id=bot_data.get('user_id', ''),
-                custom_strategy_code=custom_strategy_code
+                custom_strategy_code=custom_strategy_code,
+                bot_name=bot_data.get('bot_name')
             )
             bot.parameters = parameters
             
@@ -1005,7 +1009,7 @@ class Bot:
         """
         return {
             'botId': self.bot_id,
-            'botName': self.bot_type,
+            'botName': self.bot_name,
             'startingUsdBalance': self.usd_given,
             'usdBalance': self.usd,
             'coinBalance': self.bc,
