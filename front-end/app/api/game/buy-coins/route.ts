@@ -67,16 +67,21 @@ export async function POST(request: NextRequest) {
     const currentUsd = player.usdBalance ?? player.usd ?? 0;
     const currentCoins = player.coinBalance ?? player.coins ?? 0;
 
+    // Check for sufficient funds - silently fail if insufficient
     if (currentUsd < totalCost) {
-      return NextResponse.json(
-        { error: 'Insufficient funds' },
-        { status: 400 }
-      );
+      return NextResponse.json({
+        success: false,
+        player,
+        coinPrice,
+        totalCost,
+        reason: 'Insufficient funds'
+      });
     }
 
     // Update using new field names (and maintain old for backward compatibility)
-    player.usdBalance = currentUsd - totalCost;
-    player.coinBalance = currentCoins + amount;
+    // Prevent negative balances
+    player.usdBalance = Math.max(0, currentUsd - totalCost);
+    player.coinBalance = Math.max(0, currentCoins + amount);
     player.usd = player.usdBalance;
     player.coins = player.coinBalance;
     player.lastInteractionValue = amount;

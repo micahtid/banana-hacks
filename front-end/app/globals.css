@@ -80,7 +80,7 @@ body {
 }
 
 .animate-scroll-fast {
-  animation: scroll-fast 8s linear infinite;
+  animation: scroll-fast 30s linear infinite;
 }
 
 @keyframes scroll-fast {
