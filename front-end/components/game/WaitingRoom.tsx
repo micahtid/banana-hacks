@@ -1,3 +1,10 @@
+/**
+ * WaitingRoom Component
+ * 
+ * Pre-game lobby where players wait for the game creator to start the game
+ * Displays player list, game ID for sharing, and start button (creator only)
+ */
+
 "use client";
 
 import { Card } from "@/components/Card";
@@ -7,16 +14,26 @@ import { useState } from "react";
 import { useUser } from "@/providers/UserProvider";
 import Image from "next/image";
 
+/* ============================================
+   TYPES
+   ============================================ */
+
 interface WaitingRoomProps {
   game: Game;
   currentUser: User;
 }
 
+/* ============================================
+   COMPONENT
+   ============================================ */
+
 export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
+  /* ========== State & Hooks ========== */
   const { user } = useUser();
   const [isStarting, setIsStarting] = useState(false);
   const isCreator = user?.uid === game.creatorId;
 
+  /* ========== Event Handlers ========== */
   const handleStartGame = async () => {
     if (!user?.uid) return;
     setIsStarting(true);
@@ -32,17 +49,18 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
     navigator.clipboard.writeText(game.gameId);
   };
 
+  /* ========== Render ========== */
   return (
     <div className="flex min-h-screen items-center justify-center p-8">
       <div className="w-full max-w-2xl flex flex-col gap-4">
-        {/* Header */}
+        {/* ========== Header ========== */}
         <div className="text-center">
           <h1 className="font-retro text-5xl text-[var(--primary-light)] mb-2">
             WAITING ROOM
           </h1>
         </div>
 
-        {/* Game ID */}
+        {/* ========== Game ID Display & Copy ========== */}
         <Card padding="lg">
           <p className="text-[var(--foreground)] mb-3 text-center">
             Share this Game ID with other players:
@@ -57,7 +75,7 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
           </div>
         </Card>
 
-        {/* Players List */}
+        {/* ========== Players List ========== */}
         <Card title={`${game.users.length} / ${game.maxPlayers}`} padding="lg">
           <div className="grid grid-cols-2 gap-3">
             {game.users.map((player) => (
@@ -90,7 +108,7 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
           </div>
         </Card>
 
-        {/* Start Button or Waiting Message */}
+        {/* ========== Start Button / Waiting Message ========== */}
         {isCreator ? (
           <Card padding="lg">
             <Button

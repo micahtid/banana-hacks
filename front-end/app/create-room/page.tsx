@@ -1,3 +1,10 @@
+/**
+ * Create Room Page
+ * 
+ * Allows authenticated users to create a new game room
+ * Configures game duration and maximum players
+ */
+
 "use client";
 
 import { useUser } from "@/providers/UserProvider";
@@ -8,15 +15,23 @@ import { Card } from "@/components/Card";
 import { useState, Suspense } from "react";
 import { useRouter } from "next/navigation";
 
+/* ============================================
+   MAIN COMPONENT
+   ============================================ */
+
 function CreateRoomContent() {
+  /* ========== State & Hooks ========== */
   const { user } = useUser();
   const router = useRouter();
+  
+  // Form state
   const [gameDuration, setGameDuration] = useState("30");
   const [maxPlayers, setMaxPlayers] = useState("4");
   const [userName, setUserName] = useState("");
   const [error, setError] = useState("");
   const [isCreating, setIsCreating] = useState(false);
 
+  /* ========== Event Handlers ========== */
   const handleCreateRoom = async () => {
     if (!user) {
       setError("Please login first");
@@ -54,6 +69,7 @@ function CreateRoomContent() {
     }
   };
 
+  /* ========== Loading & Auth Checks ========== */
   if (user === undefined) {
     return (
       <div className="flex min-h-screen items-center justify-center">
@@ -67,10 +83,11 @@ function CreateRoomContent() {
     return null;
   }
 
+  /* ========== Render ========== */
   return (
     <div className="flex min-h-screen items-center justify-center p-8 bg-[var(--background)]">
       <div className="flex w-full max-w-md flex-col gap-6">
-        {/* Title */}
+        {/* ========== Title ========== */}
         <div className="text-center">
           <h1 className="font-retro text-5xl text-[var(--primary-light)] mb-2">
             CREATE GAME ROOM
@@ -80,7 +97,7 @@ function CreateRoomContent() {
           </p>
         </div>
 
-        {/* Main Form */}
+        {/* ========== Creation Form ========== */}
         <Card padding="lg">
           <div className="flex flex-col gap-4">
             <Input
@@ -135,7 +152,7 @@ function CreateRoomContent() {
           </div>
         </Card>
 
-        {/* Error Message */}
+        {/* ========== Error Display ========== */}
         {error && (
           <Card className="border-[var(--danger)]">
             <p className="text-[var(--danger)] text-center">{error}</p>
@@ -145,6 +162,10 @@ function CreateRoomContent() {
     </div>
   );
 }
+
+/* ============================================
+   PAGE WRAPPER WITH SUSPENSE
+   ============================================ */
 
 export default function CreateRoom() {
   return (
