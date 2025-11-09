@@ -47,10 +47,16 @@ export const signOut = () => {
 export interface Bot {
   botId: string;
   botName: string;
-  startingUsdBalance: number;
-  usdBalance: number;
   coinBalance: number;
   isActive: boolean;
+}
+
+export interface LeaderboardEntry {
+  userId: string;
+  userName: string;
+  usdBalance: number;
+  coinBalance: number;
+  wealth: number;
 }
 
 export interface Player {
@@ -90,6 +96,8 @@ export interface Game {
   durationMinutes: number;
   maxPlayers: number;
   eventTime: Date;
+  eventTitle?: string;
+  eventTriggered?: boolean;
 
   players: Player[];
 
@@ -397,7 +405,7 @@ export const toggleMinion = async (
   gameId: string
 ): Promise<void> => {
   console.log('[toggleMinion] Request:', { minionId, userId, gameId });
-  
+
   const response = await fetch('/api/bot/toggle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -414,4 +422,22 @@ export const toggleMinion = async (
 
   const result = await response.json();
   console.log('[toggleMinion] Success:', result);
+};
+
+/**
+ * Get leaderboard for a game
+ */
+export const getLeaderboard = async (gameId: string): Promise<LeaderboardEntry[]> => {
+  const response = await fetch(`/api/game/leaderboard/${gameId}`, {
+    method: 'GET',
+    headers: { 'Content-Type': 'application/json' },
+  });
+
+  if (!response.ok) {
+    const error = await response.json();
+    throw new Error(error.error || 'Failed to fetch leaderboard');
+  }
+
+  const data = await response.json();
+  return data.leaderboard || [];
 };

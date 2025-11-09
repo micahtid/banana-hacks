@@ -75,7 +75,23 @@ class MarketData:
 class Market:
     """Market manager that handles users and market updates"""
     
-    def __init__(self, initial_price: float = 1.0, game_id: Optional[str] = None):
+    # Event titles pool
+    EVENT_TITLES = [
+        "Supply Crash",
+        "Monkey Invasion",
+        "Banana Shortage",
+        "Golden Banana Found",
+        "Tropical Storm",
+        "Harvest Festival",
+        "Market Panic",
+        "Investor Frenzy",
+        "Banana Boom",
+        "Export Ban",
+        "Celebrity Endorsement",
+        "Disease Outbreak"
+    ]
+    
+    def __init__(self, initial_price: float = 1.0, game_id: Optional[str] = None, duration: int = 300):
         """Initialize the market with starting price"""
         self.game_id = game_id or str(uuid.uuid4())
         self.start_time = datetime.now()
@@ -83,6 +99,18 @@ class Market:
         self.users: List[str] = []
         self.dollar_supply = 1000000
         self.bc_supply = 1000000
+        
+        # Generate random event time (between 30% and 70% of game duration)
+        min_event_tick = int(duration * 0.3)
+        max_event_tick = int(duration * 0.7)
+        self.event_tick = random.randint(min_event_tick, max_event_tick)
+        self.event_time = self.start_time + timedelta(seconds=self.event_tick)
+        
+        # Choose random event title
+        self.event_title = random.choice(self.EVENT_TITLES)
+        
+        # Track if event has been triggered
+        self.event_triggered = False
         
         # Initialize MarketData
         self.market_data = MarketData(
@@ -114,6 +142,11 @@ class Market:
         """Update the market state (price, tick, volatility)"""
         # Increment tick
         self.current_tick += 1
+        
+        # Check if event should trigger
+        if not self.event_triggered and self.current_tick >= self.event_tick:
+            self.event_triggered = True
+            self._trigger_event()
         
         # Ensure supplies are always above minimum thresholds BEFORE any calculations
         MIN_BC_SUPPLY = 10000.0  # Increased minimum to prevent extreme price swings
@@ -188,6 +221,31 @@ class Market:
         # Save to Redis after update
         self.save_to_redis()
     
+    def _trigger_event(self):
+        """Trigger a market event with sudden price change"""
+        # Determine if event is positive or negative (50/50 chance)
+        is_positive = random.random() > 0.5
+        
+        # Create a sudden supply shock
+        if is_positive:
+            # Positive event: Increase demand (reduce BC supply, increase dollar supply)
+            shock_factor = random.uniform(0.15, 0.25)  # 15-25% shock
+            self.bc_supply *= (1 - shock_factor)
+            self.dollar_supply *= (1 + shock_factor * 0.5)
+        else:
+            # Negative event: Decrease demand (increase BC supply, reduce dollar supply)
+            shock_factor = random.uniform(0.15, 0.25)  # 15-25% shock
+            self.bc_supply *= (1 + shock_factor)
+            self.dollar_supply *= (1 - shock_factor * 0.5)
+        
+        # Ensure supplies stay above minimums
+        MIN_BC_SUPPLY = 10000.0
+        MIN_DOLLAR_SUPPLY = 10000.0
+        self.bc_supply = max(MIN_BC_SUPPLY, self.bc_supply)
+        self.dollar_supply = max(MIN_DOLLAR_SUPPLY, self.dollar_supply)
+        
+        print(f"🎉 EVENT TRIGGERED: {self.event_title} - {'Positive' if is_positive else 'Negative'} shock of {shock_factor*100:.1f}%")
+    
     def save_to_redis(self):
         """Save all market data to Redis"""
         try:
@@ -201,7 +259,11 @@ class Market:
                 "current_tick": str(self.current_tick),
                 "users": json.dumps(self.users),
                 "dollar_supply": str(self.dollar_supply),
-                "bc_supply": str(self.bc_supply)
+                "bc_supply": str(self.bc_supply),
+                "event_tick": str(self.event_tick),
+                "event_time": serialize_datetime(self.event_time),
+                "event_title": self.event_title,
+                "event_triggered": str(self.event_triggered)
             })
             
             # Store market data
@@ -242,6 +304,10 @@ class Market:
             users = json.loads(market_data["users"])
             dollar_supply = float(market_data["dollar_supply"])
             bc_supply = float(market_data["bc_supply"])
+            event_tick = int(market_data.get("event_tick", 150))
+            event_time = deserialize_datetime(market_data.get("event_time", serialize_datetime(start_time + timedelta(seconds=150))))
+            event_title = market_data.get("event_title", "Market Event")
+            event_triggered = market_data.get("event_triggered", "false").lower() == "true"
             # Load market data
             market_data_key = f"market:{game_id}:data"
             data = r.hgetall(market_data_key)
@@ -269,6 +335,10 @@ class Market:
             market.dollar_supply = dollar_supply
             market.bc_supply = bc_supply
             market.market_data = market_data_obj
+            market.event_tick = event_tick
+            market.event_time = event_time
+            market.event_title = event_title
+            market.event_triggered = event_triggered
             
             return market
             

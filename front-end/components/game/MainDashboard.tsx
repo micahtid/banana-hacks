@@ -6,9 +6,11 @@ import { Input } from "@/components/Input";
 import {
   type Game,
   type User,
+  type LeaderboardEntry,
   buyCoins,
   sellCoins,
   toggleMinion,
+  getLeaderboard,
 } from "@/utils/database_functions";
 import { useState, useEffect, useMemo } from "react";
 import { useUser } from "@/providers/UserProvider";
@@ -24,6 +26,8 @@ import {
   Legend,
   Filler,
 } from "chart.js";
+import { FaTrophy, FaMedal, FaAward } from "react-icons/fa";
+import { TbAlertTriangle } from "react-icons/tb";
 
 ChartJS.register(
   CategoryScale,
@@ -63,12 +67,54 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
   const [togglingMinion, setTogglingMinion] = useState<string | null>(null);
+  const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
+  const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [rotMultiplier, setRotMultiplier] = useState<number>(1.0);
+  const [rotLevel, setRotLevel] = useState<number>(0);
+  const [newsText, setNewsText] = useState<string>("NO NEWS");
+  const [isEventActive, setIsEventActive] = useState<boolean>(false);
+  const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
   const interactionsArr = Array.isArray(game.interactions)
     ? game.interactions
     : [];
+
+  // --- Event News Banner Logic ---
+  useEffect(() => {
+    if (game.eventTriggered && !previousEventTriggered) {
+      // Event just triggered!
+      setPreviousEventTriggered(true);
+      setNewsText(game.eventTitle || "MARKET EVENT");
+      setIsEventActive(true);
+
+      // Return to "NO NEWS" after 30 seconds
+      const timer = setTimeout(() => {
+        setNewsText("NO NEWS");
+        setIsEventActive(false);
+      }, 30000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [game.eventTriggered, previousEventTriggered, game.eventTitle]);
+
+  // Calculate current user's total trades (their own + their bots' trades)
+  const currentUserName = currentUser.userName || currentUser.playerName;
+  const currentUserBotNames = (currentUser.bots || []).map((bot: any) => bot.botName).filter(Boolean);
+
+  const currentUserTotalTrades = interactionsArr.filter((interaction: any) => {
+    if (!interaction.name) return false;
+    const name = interaction.name;
+
+    // Check if it's the user's own trade
+    if (name === currentUserName) return true;
+
+    // Check if it's one of the user's bots
+    return currentUserBotNames.some((botName: string) =>
+      name.includes(botName) || name.toLowerCase().includes(botName.toLowerCase())
+    );
+  }).length;
 
   const currentPrice = coinsArr.length > 0 ? Number(coinsArr.at(-1)) : 1.0;
   const previousPrice =
@@ -121,6 +167,120 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     const interval = setInterval(updateTimer, 1000);
     return () => clearInterval(interval);
   }, [game.startTime, game.gameDuration, game.isStarted]);
+
+  // --- Leaderboard Real-time Updates ---
+  useEffect(() => {
+    if (!showLeaderboard || !game.gameId) return;
+
+    const fetchLeaderboard = async () => {
+      try {
+        const data = await getLeaderboard(game.gameId ?? "");
+        setLeaderboard(data);
+      } catch (error) {
+        console.error("Failed to fetch leaderboard:", error);
+      }
+    };
+
+    // Initial fetch
+    fetchLeaderboard();
+
+    // Poll every 1 second for real-time updates
+    const interval = setInterval(fetchLeaderboard, 1000);
+    return () => clearInterval(interval);
+  }, [showLeaderboard, game.gameId]);
+
+  // --- Banana Rot Logic ---
+  useEffect(() => {
+    const calculateRot = () => {
+      // Get last interaction time and value for current user
+      const lastInteractionTime = currentUser.lastInteractionTime || currentUser.lastInteractionT;
+      const lastInteractionValue = currentUser.lastInteractionValue || currentUser.lastInteractionV || 0;
+
+      if (!lastInteractionTime) {
+        // No trades yet, coins are fresh
+        setRotMultiplier(1.0);
+        setRotLevel(0);
+        return;
+      }
+
+      // Calculate seconds since last trade
+      let lastTradeDate: Date;
+      if (typeof lastInteractionTime === 'object' && 'seconds' in lastInteractionTime) {
+        lastTradeDate = new Date((lastInteractionTime as { seconds: number }).seconds * 1000);
+      } else if (lastInteractionTime instanceof Date) {
+        lastTradeDate = lastInteractionTime;
+      } else {
+        lastTradeDate = new Date(lastInteractionTime as string);
+      }
+
+      const now = new Date();
+      const secondsSinceLastTrade = Math.floor((now.getTime() - lastTradeDate.getTime()) / 1000);
+
+      // Use absolute value of lastInteractionValue (current tick when trade happened)
+      const tradeSize = Math.abs(lastInteractionValue) || 50; // Default to 50 if undefined/0
+
+      // Calculate dynamic cooldown based on trade size
+      // Larger trades (higher tick values) = longer cooldown (more protection)
+      // Formula: cooldown = minCooldown + (maxCooldown - minCooldown) * (tradeSize / (tradeSize + scaleFactor))
+      const MIN_COOLDOWN = 1.0;   // Minimum 1 second cooldown
+      const MAX_COOLDOWN = 7.5;   // Maximum 7.5 seconds cooldown
+      const COOLDOWN_SCALE = 100; // Adjust sensitivity (lower = faster growth)
+      
+      const cooldownSeconds = MIN_COOLDOWN + (MAX_COOLDOWN - MIN_COOLDOWN) * (tradeSize / (tradeSize + COOLDOWN_SCALE));
+
+      // Apply cooldown period
+      if (secondsSinceLastTrade < cooldownSeconds) {
+        // Still in cooldown, coins are fresh
+        setRotMultiplier(1.0);
+        setRotLevel(0);
+        return;
+      }
+
+      // Calculate time after cooldown (t in the formula)
+      const t = secondsSinceLastTrade - cooldownSeconds;
+
+      // Calculate decay coefficient based on trade size
+      // Larger trades = slower decay (reward large trades)
+      // Formula: coefficient = minCoeff + (maxCoeff - minCoeff) / (1 + tradeSize/scaleFactor)
+      const MIN_COEFF = 0.02;  // Slowest decay for large trades
+      const MAX_COEFF = 0.08;  // Fastest decay for tiny trades
+      const DECAY_SCALE = 100; // Adjust this to tune sensitivity
+      
+      const coefficient = MIN_COEFF + (MAX_COEFF - MIN_COEFF) / (1 + tradeSize / DECAY_SCALE);
+
+      // Apply exponential decay: e^(-coefficient * t)
+      const multiplier = Math.exp(-coefficient * t);
+
+      // Debug logging (only log occasionally to avoid spam)
+      if (secondsSinceLastTrade % 5 === 0 && secondsSinceLastTrade > 0) {
+        console.log('[Rot Debug]', {
+          tradeSize,
+          cooldownSeconds: cooldownSeconds.toFixed(2),
+          secondsSinceLastTrade,
+          timeAfterCooldown: t.toFixed(1),
+          coefficient: coefficient.toFixed(4),
+          multiplier: multiplier.toFixed(4),
+          rotLevel: Math.min(4, Math.floor(t / 5))
+        });
+      }
+
+      setRotMultiplier(multiplier);
+
+      // Determine rot level for color changes (every 5 seconds after cooldown)
+      // Level 0: 0-5s (fresh - ripe yellow)
+      // Level 1: 5-10s (slightly brown)
+      // Level 2: 10-15s (brown)
+      // Level 3: 15-20s (dark brown)
+      // Level 4: 20s+ (nearly black/rotten)
+      const level = Math.min(4, Math.floor(t / 5));
+      setRotLevel(level);
+    };
+
+    // Update rot calculation every second
+    calculateRot();
+    const interval = setInterval(calculateRot, 1000);
+    return () => clearInterval(interval);
+  }, [currentUser.lastInteractionTime, currentUser.lastInteractionT, currentUser.lastInteractionValue, currentUser.lastInteractionV]);
 
   // --- Actions ---
   const handleBuy = async () => {
@@ -176,8 +336,69 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   // --- Wallet Data ---
   const usd = typeof currentUser.usd === "number" ? currentUser.usd : 0;
-  const coins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
+  const rawCoins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
+  const coins = rawCoins * rotMultiplier; // Apply rot decay
   const minions = Array.isArray(currentUser.bots) ? currentUser.bots : [];
+
+  // Banana rot color mapping
+  const getRotColor = (level: number): { bg: string; border: string; text: string } => {
+    switch (level) {
+      case 0:
+        // Fresh - Ripe yellow
+        return {
+          bg: "bg-yellow-100",
+          border: "border-yellow-400",
+          text: "text-yellow-900"
+        };
+      case 1:
+        // Slightly brown
+        return {
+          bg: "bg-amber-100",
+          border: "border-amber-500",
+          text: "text-amber-900"
+        };
+      case 2:
+        // Brown
+        return {
+          bg: "bg-orange-200",
+          border: "border-orange-600",
+          text: "text-orange-950"
+        };
+      case 3:
+        // Dark brown
+        return {
+          bg: "bg-amber-800",
+          border: "border-amber-900",
+          text: "text-amber-100"
+        };
+      case 4:
+      default:
+        // Nearly black/rotten
+        return {
+          bg: "bg-stone-900",
+          border: "border-stone-950",
+          text: "text-stone-300"
+        };
+    }
+  };
+
+  const rotColors = getRotColor(rotLevel);
+
+  // Bot price mapping for performance calculation
+  const BOT_PRICES: { [key: string]: number } = {
+    "Random Bot": 300,
+    "Momentum Bot": 800,
+    "Mean Reversion Bot": 750,
+    "Market Maker Bot": 1200,
+    "Hedger Bot": 1000,
+    "Custom Minion": 1750,
+    // Backend type names (for backward compatibility)
+    "random": 300,
+    "momentum": 800,
+    "mean_reversion": 750,
+    "market_maker": 1200,
+    "hedger": 1000,
+  };
 
   // --- Chart Data ---
   const DISPLAY_WINDOW_SECONDS = 60;
@@ -298,11 +519,33 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         <h2 className="font-retro text-4xl text-[var(--primary)]">
           MAIN DASHBOARD
         </h2>
-        <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
-          <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
-          <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
-            {timeRemaining}
+        <div className="flex items-center gap-3 flex-1 ml-8">
+          {/* News Carousel Banner */}
+          <div className="px-8 py-2 overflow-hidden relative flex items-center flex-grow">
+            <div className="overflow-hidden relative w-full flex items-center">
+              <div
+                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast flex items-center gap-2 ${
+                  isEventActive ? 'text-white font-bold' : 'text-gray-700'
+                }`}
+              >
+                {isEventActive && <TbAlertTriangle className="text-4xl" />}
+                <span>{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •</span>
+              </div>
+            </div>
           </div>
+          <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
+            <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
+            <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
+              {timeRemaining}
+            </div>
+          </div>
+          <button
+            onClick={() => setShowLeaderboard(true)}
+            className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)] hover:bg-[var(--primary)] hover:border-[var(--primary-dark)] transition-colors cursor-pointer flex items-center justify-center"
+            style={{ aspectRatio: "1/1", height: "100%" }}
+          >
+            <FaTrophy className="text-4xl text-[var(--primary-dark)] hover:text-[var(--background)]" />
+          </button>
         </div>
       </div>
 
@@ -333,9 +576,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   </div>
                 </div>
                 <div className="text-right">
-                  <div className="text-sm text-[var(--primary)]">Total Volume</div>
+                  <div className="text-sm text-[var(--primary)]">Your Total Trades</div>
                   <div className="font-retro text-2xl text-[var(--primary-dark)]">
-                    {interactionsArr.length} trades
+                    {currentUserTotalTrades}
                   </div>
                 </div>
               </div>
@@ -352,9 +595,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   ${usd.toFixed(2)}
                 </div>
               </div>
-              <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
+              <div className={`p-3 border-2 transition-colors duration-500 ${rotColors.bg} ${rotColors.border}`}>
                 <div className="text-sm text-[var(--primary)]">Banana Coins</div>
-                <div className="font-retro text-2xl text-[var(--primary-dark)]">
+                <div className={`font-retro text-2xl transition-colors duration-500 ${rotColors.text}`}>
                   {coins.toFixed(2)} BC
                 </div>
               </div>
@@ -414,10 +657,24 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                 {minions.map((minion: any) => {
                   const isActive = minion.isActive ?? false;
                   const minionId = minion.botId ?? '';
-                  const usdBalance = typeof minion.usdBalance === 'number' ? minion.usdBalance : 0;
                   const coinBalance = typeof minion.coinBalance === 'number' ? minion.coinBalance : 0;
-                  const startingBalance = typeof minion.startingUsdBalance === 'number' ? minion.startingUsdBalance : 0;
-                  const performance = startingBalance > 0 ? ((usdBalance + coinBalance * currentPrice - startingBalance) / startingBalance * 100) : 0;
+
+                  // Calculate performance based on BC holdings value change
+                  const currentValue = coinBalance * currentPrice;
+
+                  // Estimate bot's starting value from its purchase price
+                  // Bots start with their cost converted to BC at the price when purchased
+                  const botName = minion.botName ?? "";
+                  const baseBotName = botName.replace(/\s+\d+$/, ""); // Remove number suffix
+                  const botCost = BOT_PRICES[baseBotName] || BOT_PRICES[botName] || 1000;
+
+                  // Use stored initial BC if available, otherwise estimate
+                  const initialBC = minion.initialCoinBalance || (botCost / (coinsArr[0] || 1));
+                  const initialValue = initialBC * (coinsArr[0] || 1);
+
+                  // Calculate performance
+                  const valueChange = currentValue - initialValue;
+                  const performancePercent = initialValue > 0 ? (valueChange / initialValue) * 100 : 0;
 
                   return (
                     <div
@@ -438,10 +695,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                           size="sm"
                           disabled={togglingMinion !== null}
                         >
-                          {togglingMinion === minionId 
-                            ? "..." 
-                            : isActive 
-                            ? "Stop" 
+                          {togglingMinion === minionId
+                            ? "..."
+                            : isActive
+                            ? "Stop"
                             : "Start"}
                         </Button>
                       </div>
@@ -453,21 +710,21 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                           </span>
                         </div>
                         <div className="flex justify-between">
-                          <span>USD Balance:</span>
-                          <span className="text-[var(--success)]">
-                            ${usdBalance.toFixed(2)}
-                          </span>
-                        </div>
-                        <div className="flex justify-between">
                           <span>BC Balance:</span>
                           <span className="text-[var(--primary-dark)]">
                             {coinBalance.toFixed(2)} BC
                           </span>
                         </div>
                         <div className="flex justify-between">
+                          <span>BC Value:</span>
+                          <span className="text-[var(--success)]">
+                            ${currentValue.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
                           <span>Performance:</span>
-                          <span className={performance >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
-                            {performance >= 0 ? '+' : ''}{performance.toFixed(1)}%
+                          <span className={performancePercent >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
+                            {performancePercent >= 0 ? '+' : ''}{performancePercent.toFixed(1)}%
                           </span>
                         </div>
                       </div>
@@ -479,6 +736,70 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           </Card>
         </div>
       </div>
+
+      {/* Leaderboard Modal */}
+      {showLeaderboard && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50 p-8"
+          style={{ backgroundColor: "rgba(0, 0, 0, 0.2)" }}
+          onClick={() => setShowLeaderboard(false)}
+        >
+          <div
+            className="w-full max-w-xl max-h-[80vh] overflow-y-auto border-2 border-[var(--border)] bg-[var(--card-bg)] p-8"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-8 pb-4 border-b-2 border-[var(--border)]">
+              <h2 className="font-retro text-4xl text-[var(--primary)]">
+                LEADERBOARD
+              </h2>
+              <button
+                onClick={() => setShowLeaderboard(false)}
+                className="text-3xl text-[var(--primary)] hover:text-[var(--danger)] transition-colors font-retro"
+              >
+                ✕
+              </button>
+            </div>
+
+            {leaderboard.length === 0 ? (
+              <div className="text-center py-12">
+                <p className="text-[var(--primary)] text-lg">Loading leaderboard...</p>
+              </div>
+            ) : (
+              <div className="space-y-0">
+                {leaderboard.map((entry, index) => {
+                  const isCurrentUser = entry.userId === currentUser.userId;
+                  // Recalculate wealth in real-time using current price
+                  const liveWealth = entry.usdBalance + (entry.coinBalance * currentPrice);
+
+                  return (
+                    <div
+                      key={entry.userId}
+                      className={`py-5 px-4 border-b border-[var(--border)] flex items-center justify-between ${
+                        isCurrentUser ? "bg-[var(--background)]" : ""
+                      }`}
+                    >
+                      <div className="flex items-center gap-4">
+                        <div className="min-w-[3rem] flex items-center justify-center">
+                          {index === 0 && <FaTrophy className="text-3xl text-yellow-400" />}
+                          {index === 1 && <FaMedal className="text-3xl text-gray-400" />}
+                          {index === 2 && <FaAward className="text-3xl text-amber-600" />}
+                          {index > 2 && <span className="font-retro text-2xl text-[var(--primary-dark)]">#{index + 1}</span>}
+                        </div>
+                        <div className="font-retro text-xl text-[var(--primary-dark)]">
+                          {entry.userName}
+                        </div>
+                      </div>
+                      <div className="font-retro text-2xl text-[var(--success)]">
+                        ${liveWealth.toFixed(2)}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
