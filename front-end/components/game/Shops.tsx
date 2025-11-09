@@ -4,7 +4,7 @@ import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { type Game, type User, buyMinion } from "@/utils/database_functions";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useUser } from "@/providers/UserProvider";
 import { TbAlertTriangle } from "react-icons/tb";
 
@@ -68,22 +68,52 @@ export default function Shops({ game, currentUser }: ShopsProps) {
   const [newsText, setNewsText] = useState<string>("NO NEWS");
   const [isEventActive, setIsEventActive] = useState<boolean>(false);
   const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
+  const eventTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Event News Banner Logic
   useEffect(() => {
+    // Clear any existing timer
+    if (eventTimerRef.current) {
+      clearTimeout(eventTimerRef.current);
+      eventTimerRef.current = null;
+    }
+
+    // Reset previousEventTriggered when eventTriggered becomes false
+    if (!game.eventTriggered && previousEventTriggered) {
+      setPreviousEventTriggered(false);
+      setNewsText("NO NEWS");
+      setIsEventActive(false);
+    }
+    
     if (game.eventTriggered && !previousEventTriggered) {
       setPreviousEventTriggered(true);
-      setNewsText(game.eventTitle || "MARKET EVENT");
+      const newText = game.eventTitle || "MARKET EVENT";
+      setNewsText(newText);
       setIsEventActive(true);
 
-      const timer = setTimeout(() => {
+      // Return to "NO NEWS" after 30 seconds
+      eventTimerRef.current = setTimeout(() => {
         setNewsText("NO NEWS");
         setIsEventActive(false);
+        eventTimerRef.current = null;
       }, 30000);
-
-      return () => clearTimeout(timer);
     }
+
+    // Cleanup on unmount
+    return () => {
+      if (eventTimerRef.current) {
+        clearTimeout(eventTimerRef.current);
+        eventTimerRef.current = null;
+      }
+    };
   }, [game.eventTriggered, previousEventTriggered, game.eventTitle]);
+
+  // Ensure newsText always has a value (defensive check)
+  useEffect(() => {
+    if (!newsText || newsText.trim() === '') {
+      setNewsText("NO NEWS");
+    }
+  }, [newsText]);
 
   // Debug: Log currentUser when component mounts
   useEffect(() => {
@@ -208,29 +238,33 @@ export default function Shops({ game, currentUser }: ShopsProps) {
   return (
     <div>
       {/* Header with News Flash */}
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="font-retro text-4xl text-[var(--primary)]">
+      <div className="flex items-center gap-6 mb-6">
+        <h2 className="font-retro text-4xl text-[var(--primary)] flex-shrink-0">
           MINION SHOP
         </h2>
-        <div className="flex items-center gap-3 flex-1 ml-8">
-          {/* News Carousel Banner */}
-          <div className="px-8 py-2 overflow-hidden relative flex items-center flex-grow">
-            <div className="overflow-hidden relative w-full flex items-center">
-              <div
-                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast flex items-center gap-2 ${
-                  isEventActive ? 'text-white font-bold' : 'text-gray-700'
-                }`}
-              >
-                {isEventActive && <TbAlertTriangle className="text-4xl" />}
-                <span>{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •</span>
-              </div>
+        {/* News Carousel Banner - stretches between page name and balance */}
+        <div className={`py-2 px-4 overflow-hidden relative flex items-center flex-1 min-w-0 ${isEventActive ? 'border-2 border-[var(--danger)] animate-flash-red rounded' : ''}`}>
+          <div className="overflow-hidden relative w-full flex items-center">
+            <div
+              className="font-retro text-3xl whitespace-nowrap animate-scroll-fast inline-flex items-center gap-2 text-gray-700"
+              style={{ willChange: 'transform' }}
+            >
+              {/* Duplicate content for seamless infinite scroll */}
+              <span className="inline-block">
+                {isEventActive && <TbAlertTriangle className="text-4xl inline-block mr-2" />}
+                {`${newsText || "NO NEWS"} • `.repeat(6)}
+              </span>
+              <span className="inline-block">
+                {isEventActive && <TbAlertTriangle className="text-4xl inline-block mr-2" />}
+                {`${newsText || "NO NEWS"} • `.repeat(6)}
+              </span>
             </div>
           </div>
-          <div className="text-right flex-shrink-0">
-            <div className="text-sm text-[var(--foreground)]">Your Balance</div>
-            <div className="font-retro text-3xl text-[var(--success)]">
-              ${currentUser.usd.toFixed(2)} USD
-            </div>
+        </div>
+        <div className="text-right flex-shrink-0">
+          <div className="text-sm text-[var(--foreground)]">Your Balance</div>
+          <div className="font-retro text-3xl text-[var(--success)]">
+            ${currentUser.usd.toFixed(2)} USD
           </div>
         </div>
       </div>

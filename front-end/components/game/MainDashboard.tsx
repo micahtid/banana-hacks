@@ -12,7 +12,7 @@ import {
   toggleMinion,
   getLeaderboard,
 } from "@/utils/database_functions";
-import { useState, useEffect, useMemo } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useUser } from "@/providers/UserProvider";
 import { Line } from "react-chartjs-2";
 import {
@@ -74,6 +74,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [newsText, setNewsText] = useState<string>("NO NEWS");
   const [isEventActive, setIsEventActive] = useState<boolean>(false);
   const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
+  const eventTimerRef = useRef<NodeJS.Timeout | null>(null);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
@@ -83,21 +84,49 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   // --- Event News Banner Logic ---
   useEffect(() => {
+    // Clear any existing timer
+    if (eventTimerRef.current) {
+      clearTimeout(eventTimerRef.current);
+      eventTimerRef.current = null;
+    }
+
+    // Reset previousEventTriggered when eventTriggered becomes false
+    if (!game.eventTriggered && previousEventTriggered) {
+      setPreviousEventTriggered(false);
+      setNewsText("NO NEWS");
+      setIsEventActive(false);
+    }
+    
     if (game.eventTriggered && !previousEventTriggered) {
       // Event just triggered!
       setPreviousEventTriggered(true);
-      setNewsText(game.eventTitle || "MARKET EVENT");
+      const newText = game.eventTitle || "MARKET EVENT";
+      setNewsText(newText);
       setIsEventActive(true);
 
       // Return to "NO NEWS" after 30 seconds
-      const timer = setTimeout(() => {
+      eventTimerRef.current = setTimeout(() => {
         setNewsText("NO NEWS");
         setIsEventActive(false);
+        eventTimerRef.current = null;
       }, 30000);
-
-      return () => clearTimeout(timer);
     }
+
+    // Cleanup on unmount
+    return () => {
+      if (eventTimerRef.current) {
+        clearTimeout(eventTimerRef.current);
+        eventTimerRef.current = null;
+      }
+    };
   }, [game.eventTriggered, previousEventTriggered, game.eventTitle]);
+
+  // Ensure newsText always has a value (defensive check)
+  useEffect(() => {
+    if (!newsText || newsText.trim() === '') {
+      setNewsText("NO NEWS");
+    }
+  }, [newsText]);
 
   // Calculate current user's total trades (their own + their bots' trades)
   const currentUserName = currentUser.userName || currentUser.playerName;
@@ -138,6 +167,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
       if (
         typeof game.startTime === "object" &&
+        game.startTime !== null &&
         "seconds" in game.startTime &&
         typeof (game.startTime as any).seconds === "number"
       ) {
@@ -145,7 +175,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       } else if (game.startTime instanceof Date) {
         startTime = game.startTime;
       } else {
-        startTime = new Date(game.startTime as string);
+        startTime = new Date(game.startTime as any);
       }
 
       const durationMinutes = typeof game.gameDuration === "number" ? game.gameDuration : 0;
@@ -382,7 +412,10 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     }
   };
 
-  const rotColors = getRotColor(rotLevel);
+  // If coins value rounds to 0.00, always show as fresh (level 0)
+  const coinsRounded = Number(coins.toFixed(2));
+  const effectiveRotLevel = coinsRounded === 0 ? 0 : rotLevel;
+  const rotColors = getRotColor(effectiveRotLevel);
 
   // Bot price mapping for performance calculation
   const BOT_PRICES: { [key: string]: number } = {
@@ -416,6 +449,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
     if (
       typeof game.startTime === "object" &&
+      game.startTime !== null &&
       "seconds" in game.startTime &&
       typeof (game.startTime as any).seconds === "number"
     ) {
@@ -423,7 +457,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     } else if (game.startTime instanceof Date) {
       startTime = game.startTime;
     } else {
-      startTime = new Date(game.startTime as string);
+      startTime = new Date(game.startTime as any);
     }
 
     return Math.floor((now.getTime() - startTime.getTime()) / 1000);
@@ -514,44 +548,47 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const portfolioChange = ((portfolioValue - 10000) / 10000) * 100;
 
   return (
-    <div className="h-screen flex flex-col overflow-hidden p-8">
-      <div className="flex items-center justify-between mb-6">
-        <h2 className="font-retro text-4xl text-[var(--primary)]">
+    <div className="h-full flex flex-col overflow-hidden">
+      <div className="flex items-center gap-6 mb-6">
+        <h2 className="font-retro text-4xl text-[var(--primary)] flex-shrink-0">
           MAIN DASHBOARD
         </h2>
-        <div className="flex items-center gap-3 flex-1 ml-8">
-          {/* News Carousel Banner */}
-          <div className="px-8 py-2 overflow-hidden relative flex items-center flex-grow">
-            <div className="overflow-hidden relative w-full flex items-center">
-              <div
-                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast flex items-center gap-2 ${
-                  isEventActive ? 'text-white font-bold' : 'text-gray-700'
-                }`}
-              >
-                {isEventActive && <TbAlertTriangle className="text-4xl" />}
-                <span>{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •</span>
-              </div>
+        {/* News Carousel Banner - stretches between page name and clock */}
+        <div className={`py-2 px-4 overflow-hidden relative flex items-center flex-1 min-w-0 ${isEventActive ? 'border-2 border-[var(--danger)] animate-flash-red rounded' : ''}`}>
+          <div className="overflow-hidden relative w-full flex items-center">
+            <div
+              className="font-retro text-3xl whitespace-nowrap animate-scroll-fast inline-flex items-center gap-2 text-gray-700"
+              style={{ willChange: 'transform' }}
+            >
+              {/* Duplicate content for seamless infinite scroll */}
+              <span className="inline-block">
+                {isEventActive && <TbAlertTriangle className="text-4xl inline-block mr-2" />}
+                {`${newsText || "NO NEWS"} • `.repeat(6)}
+              </span>
+              <span className="inline-block">
+                {isEventActive && <TbAlertTriangle className="text-4xl inline-block mr-2" />}
+                {`${newsText || "NO NEWS"} • `.repeat(6)}
+              </span>
             </div>
           </div>
-          <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
-            <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
-            <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
-              {timeRemaining}
-            </div>
-          </div>
-          <button
-            onClick={() => setShowLeaderboard(true)}
-            className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)] hover:bg-[var(--primary)] hover:border-[var(--primary-dark)] transition-colors cursor-pointer flex items-center justify-center"
-            style={{ aspectRatio: "1/1", height: "100%" }}
-          >
-            <FaTrophy className="text-4xl text-[var(--primary-dark)] hover:text-[var(--background)]" />
-          </button>
         </div>
+        <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)] flex-shrink-0">
+          <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
+          <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
+            {timeRemaining}
+          </div>
+        </div>
+        <button
+          onClick={() => setShowLeaderboard(true)}
+          className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)] hover:bg-[var(--primary)] hover:border-[var(--primary-dark)] transition-colors cursor-pointer flex items-center justify-center flex-shrink-0"
+          style={{ aspectRatio: "1/1", height: "100%" }}
+        >
+          <FaTrophy className="text-4xl text-[var(--primary-dark)] hover:text-[var(--background)]" />
+        </button>
       </div>
-
       <div
         style={{ display: "grid", gridTemplateColumns: "65% 35%", gap: "1.5rem" }}
-        className="flex-1 min-h-0"
+        className="flex-1 min-h-0 pb-8"
       >
         <div className="flex flex-col min-h-0 overflow-hidden">
           <Card title="BANANA COIN MARKET" padding="lg" className="h-full flex flex-col">

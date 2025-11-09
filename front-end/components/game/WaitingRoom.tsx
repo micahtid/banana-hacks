@@ -76,23 +76,23 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
         </Card>
 
         {/* ========== Players List ========== */}
-        <Card title={`${game.users.length} / ${game.maxPlayers}`} padding="lg">
+        <Card title={`${(game.users || []).length} / ${game.maxPlayers}`} padding="lg">
           <div className="grid grid-cols-2 gap-3">
-            {game.users.map((player) => (
+            {(game.users || []).map((player) => (
               <div
-                key={player.userId}
+                key={(player as any).userId}
                 className={`
                   p-3 border-2
                   ${
-                    player.userId === currentUser.userId
+                    (player as any).userId === (currentUser as any).userId
                       ? "border-[var(--primary)] bg-[var(--border)]"
                       : "border-[var(--border)]"
                   }
                 `}
               >
                 <div className="font-retro text-lg text-[var(--primary-light)] flex items-center gap-2">
-                  <span>{player.userName}</span>
-                  {player.userId === game.creatorId && (
+                  <span>{(player as any).userName}</span>
+                  {(player as any).userId === game.creatorId && (
                     <Image
                       src="/crown.svg"
                       alt="Creator"
@@ -101,7 +101,7 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
                       className="inline-block"
                     />
                   )}
-                  {player.userId === currentUser.userId && <span>(You)</span>}
+                  {(player as any).userId === (currentUser as any).userId && <span>(You)</span>}
                 </div>
               </div>
             ))}

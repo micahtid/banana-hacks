@@ -106,19 +106,19 @@ export default function GamePage() {
     firebaseUid: user.uid,
     playersCount: playersList.length,
     players: playersList.map(p => ({ 
-      userId: p.userId, 
+      userId: (p as any).userId, 
       playerId: (p as any).playerId,
-      userName: p.userName || (p as any).playerName 
+      userName: (p as any).userName || (p as any).playerName 
     }))
   });
 
   // Try to find user by userId (should match Firebase UID)
-  const currentUser = playersList.find((u) => u.userId === user.uid);
+  const currentUser = playersList.find((u) => (u as any).userId === user.uid);
   
   if (!currentUser) {
     console.error('[Game Page] Current user not found in game', {
       firebaseUid: user.uid,
-      availableUserIds: playersList.map(p => p.userId)
+      availableUserIds: playersList.map(p => (p as any).userId)
     });
     
     return (
@@ -144,18 +144,18 @@ export default function GamePage() {
   }
 
   console.log('[Game Page] Current user found:', {
-    userId: currentUser.userId,
-    userName: currentUser.userName,
-    usd: currentUser.usd,
-    coins: currentUser.coins
+    userId: (currentUser as any).userId,
+    userName: (currentUser as any).userName,
+    usd: (currentUser as any).usd,
+    coins: (currentUser as any).coins
   });
 
   return (
     <div className="min-h-screen">
       {!game.isStarted ? (
-        <WaitingRoom game={game} currentUser={currentUser} />
+        <WaitingRoom game={game} currentUser={currentUser as any} />
       ) : (
-        <GameDashboard game={game} currentUser={currentUser} />
+        <GameDashboard game={game} currentUser={currentUser as any} />
       )}
 
       {/* Countdown Overlay */}
