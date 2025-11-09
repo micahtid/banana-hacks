@@ -467,11 +467,13 @@ async def buy_coins(request: TradeRequest):
             import json
             players = json.loads(game_data.get('players', '[]'))
             
-            # Find the user
+            # Find the user (handle both userId and playerId fields)
             user_data = None
             user_index = None
             for i, player in enumerate(players):
-                if player['userId'] == request.userId:
+                # Check both userId and playerId fields for compatibility
+                player_id = player.get('userId') or player.get('playerId')
+                if player_id == request.userId:
                     user_data = player
                     user_index = i
                     break
@@ -483,8 +485,18 @@ async def buy_coins(request: TradeRequest):
             cost = request.amount * current_price
             
             # Check balance (handle both field name conventions) - ONLY use user's balances (not minion balances)
-            user_usd = user_data.get('usd', user_data.get('usdBalance', 0))
-            user_coins = user_data.get('coins', user_data.get('coinBalance', 0))
+            # Convert to float in case Redis returns strings
+            user_usd = float(user_data.get('usd', user_data.get('usdBalance', 0)))
+            user_coins = float(user_data.get('coins', user_data.get('coinBalance', 0)))
+            
+            # Validate market supply - check if there's enough BC to buy
+            if market.bc_supply < request.amount:
+                return {
+                    "success": False,
+                    "message": f"Insufficient BC supply. Available: {market.bc_supply:.2f}, Requested: {request.amount:.2f}",
+                    "newUsd": user_usd,
+                    "newCoins": user_coins
+                }
             
             # Check for sufficient funds - silently fail if insufficient (don't raise exception)
             if user_usd < cost:
@@ -508,9 +520,9 @@ async def buy_coins(request: TradeRequest):
             user_data['lastInteractionT'] = datetime.now().isoformat()
             user_data['lastInteractionV'] = market.current_tick
             
-            # Update market supplies
-            market.dollar_supply += cost
-            market.bc_supply -= request.amount
+            # Update market supplies (ensure non-negative)
+            market.dollar_supply = max(0.0, market.dollar_supply + cost)
+            market.bc_supply = max(0.0, market.bc_supply - request.amount)
             market.save_to_redis()
             
             # Update user in Redis
@@ -536,8 +548,12 @@ async def buy_coins(request: TradeRequest):
             logger.info(f"User {request.userId} bought {request.amount} BC for ${cost:.2f} (attempt {retry_count + 1})")
             
             # Get updated balances (handle both field name conventions)
+            # Use the values we just set to ensure consistency
             updated_usd = user_data.get('usd', user_data.get('usdBalance', 0))
             updated_coins = user_data.get('coins', user_data.get('coinBalance', 0))
+            # Convert to float to ensure numeric type (not string from Redis)
+            updated_usd = float(updated_usd) if updated_usd is not None else 0.0
+            updated_coins = float(updated_coins) if updated_coins is not None else 0.0
             
             return {
                 "success": True,
@@ -611,7 +627,9 @@ async def sell_coins(request: TradeRequest):
                 raise HTTPException(status_code=404, detail="User not found in game")
             
             # Check balance (handle both field name conventions)
-            user_coins = user_data.get('coins', user_data.get('coinBalance', 0))
+            # Convert to float in case Redis returns strings
+            user_usd = float(user_data.get('usd', user_data.get('usdBalance', 0)))
+            user_coins = float(user_data.get('coins', user_data.get('coinBalance', 0)))
             
             # If trying to sell more than available, sell all available coins
             actual_amount = min(request.amount, user_coins)
@@ -620,32 +638,46 @@ async def sell_coins(request: TradeRequest):
                 return {
                     "success": False,
                     "message": "No BC to sell",
-                    "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
-                    "newCoins": user_data.get('coins', user_data.get('coinBalance', 0))
+                    "newUsd": user_usd,
+                    "newCoins": user_coins
                 }
             
-            # Recalculate revenue with actual amount
+            # Validate market supply - check if there's enough USD supply to cover the sale
             revenue = actual_amount * current_price
+            if market.dollar_supply < revenue:
+                # Adjust actual_amount to what market can afford
+                max_affordable_amount = market.dollar_supply / current_price if current_price > 0 else 0
+                actual_amount = min(actual_amount, max_affordable_amount)
+                revenue = actual_amount * current_price
+                
+                if actual_amount <= 0:
+                    return {
+                        "success": False,
+                        "message": "Insufficient USD supply in market to complete sale",
+                        "newUsd": user_usd,
+                        "newCoins": user_coins
+                    }
             
             # Execute trade (update both field name conventions) - prevent negative balances
+            # Use the already-converted float values to ensure type consistency
             if 'coins' in user_data:
-                user_data['coins'] = max(0.0, user_data['coins'] - actual_amount)
+                user_data['coins'] = max(0.0, user_coins - actual_amount)
             if 'coinBalance' in user_data:
-                user_data['coinBalance'] = max(0.0, user_data.get('coinBalance', 0) - actual_amount)
+                user_data['coinBalance'] = max(0.0, user_coins - actual_amount)
             
             if 'usd' in user_data:
-                user_data['usd'] = max(0.0, user_data.get('usd', 0) + revenue)
+                user_data['usd'] = max(0.0, user_usd + revenue)
             if 'usdBalance' in user_data:
-                user_data['usdBalance'] = max(0.0, user_data.get('usdBalance', 0) + revenue)
+                user_data['usdBalance'] = max(0.0, user_usd + revenue)
             
             user_data['lastInteractionT'] = datetime.now().isoformat()
             user_data['lastInteractionV'] = market.current_tick
             user_data['lastInteractionTime'] = user_data['lastInteractionT']
             user_data['lastInteractionValue'] = actual_amount
             
-            # Update market supplies (use actual_amount, not request.amount)
-            market.dollar_supply -= revenue
-            market.bc_supply += actual_amount
+            # Update market supplies (use actual_amount, not request.amount, ensure non-negative)
+            market.dollar_supply = max(0.0, market.dollar_supply - revenue)
+            market.bc_supply = max(0.0, market.bc_supply + actual_amount)
             market.save_to_redis()
             
             # Update user in Redis
@@ -670,14 +702,21 @@ async def sell_coins(request: TradeRequest):
             
             logger.info(f"User {request.userId} sold {actual_amount} BC for ${revenue:.2f} (requested {request.amount}, attempt {retry_count + 1})")
             
+            # Get updated balances (use the values we just set to ensure consistency)
+            updated_usd = user_data.get('usd', user_data.get('usdBalance', 0))
+            updated_coins = user_data.get('coins', user_data.get('coinBalance', 0))
+            # Convert to float to ensure numeric type (not string from Redis)
+            updated_usd = float(updated_usd) if updated_usd is not None else 0.0
+            updated_coins = float(updated_coins) if updated_coins is not None else 0.0
+            
             return {
                 "success": True,
                 "action": "sell",
                 "amount": actual_amount,
                 "revenue": revenue,
                 "price": current_price,
-                "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
-                "newCoins": user_data.get('coins', user_data.get('coinBalance', 0))
+                "newUsd": updated_usd,
+                "newCoins": updated_coins
             }
             
         except HTTPException:
@@ -732,8 +771,9 @@ async def buy_bot(request: BotBuyRequest):
             
             # Check if user has enough USD (handle both usd and usdBalance fields)
             # This check happens on each retry to ensure funds are still sufficient
-            user_usd = user_data.get('usd', user_data.get('usdBalance', 0))
-            if user_usd < request.cost:
+            # Convert to float in case Redis returns strings
+            user_usd = float(user_data.get('usd', user_data.get('usdBalance', 0)))
+            if user_usd < float(request.cost):
                 raise HTTPException(status_code=400, detail="Insufficient USD")
             
             # Map front-end minion types to backend bot types
@@ -765,10 +805,12 @@ async def buy_bot(request: BotBuyRequest):
                     raise HTTPException(status_code=500, detail=f"Failed to generate custom strategy: {str(e)}")
             
             # Deduct cost from user FIRST (before minion creation) - prevent negative balances
+            # Use float conversion to ensure proper numeric operations
+            cost_float = float(request.cost)
             if 'usd' in user_data:
-                user_data['usd'] = max(0.0, user_data['usd'] - request.cost)
+                user_data['usd'] = max(0.0, user_usd - cost_float)
             if 'usdBalance' in user_data:
-                user_data['usdBalance'] = max(0.0, user_data['usdBalance'] - request.cost)
+                user_data['usdBalance'] = max(0.0, user_usd - cost_float)
             
             # Add minion entry to user's bots list
             if 'bots' not in user_data:
@@ -840,12 +882,17 @@ async def buy_bot(request: BotBuyRequest):
             bot = Bot.load_from_redis(request.gameId, bot_id)
             bot_data = bot.to_dict() if bot else {}
             
+            # Get updated USD balance (use the value we just set to ensure consistency)
+            updated_usd = user_data.get('usd', user_data.get('usdBalance', 0))
+            # Convert to float to ensure numeric type (not string from Redis)
+            updated_usd = float(updated_usd) if updated_usd is not None else 0.0
+            
             return {
                 "success": True,
                 "botId": bot_id,
                 "botType": backend_bot_type,
                 "cost": request.cost,
-                "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
+                "newUsd": updated_usd,
                 "bot": bot_data
             }
             

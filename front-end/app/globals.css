@@ -15,7 +15,7 @@
   --warning: #f59e0b;
 }
 
-@theme inline {
+:root {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
   --color-primary: var(--primary);
