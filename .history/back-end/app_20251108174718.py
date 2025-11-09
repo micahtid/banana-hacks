@@ -1,5 +1,4 @@
 import redis
-import numpy as np
 from dotenv import load_dotenv
 import os
 import uuid
@@ -62,9 +61,8 @@ def get_price_history(marketID):
 
 
 
-def set_user_wallet(marketID, userID, num_dollars=1000, num_coins=0):
-    """Set user wallet for a specific market"""
-    key = f"market:{marketID}:user:{userID}"
+def set_user_wallet(userID, num_dollars=1000, num_coins=0):
+    key = f"user:{userID}"
     wallet_data = {
         "userID": userID,
         "walletUsd": num_dollars,
@@ -72,15 +70,11 @@ def set_user_wallet(marketID, userID, num_dollars=1000, num_coins=0):
     }
     r.hset(key, mapping=wallet_data)
     print(f"Set wallet for {key}")
-    return {"success": True, "marketID": marketID, "userID": userID, "walletUsd": num_dollars, "walletCoins": num_coins}
 
-def get_user_wallet(marketID, userID):
-    """Get user wallet for a specific market"""
-    key = f"market:{marketID}:user:{userID}"
+def get_user_wallet(userID):
+    key = f"user:{userID}"
     wallet_data = r.hgetall(key)
-    if not wallet_data:
-        return {"error": "User not found in this market"}
-    return {"marketID": marketID, "userID": wallet_data["userID"], "walletUsd": wallet_data["walletUsd"], "walletCoins": wallet_data["walletCoins"]}
+    return {"userID": wallet_data["userID"], "walletUsd": wallet_data["walletUsd"], "walletCoins": wallet_data["walletCoins"]}
 
 def buy_coins(marketID, userID, num_coins, current_price):
     """
@@ -264,41 +258,51 @@ def get_user_bots(marketID, userID):
     return {"marketID": marketID, "userID": userID, "botIDs": list(bot_ids)}
 
 
-def toggle_bot(marketID, botID):
-    """Toggle a bot's active status for a specific market"""
-    bot_key = f"market:{marketID}:bot:{botID}"
+def toggle_bot(botID):
+    """Toggle a bot's active status"""
+    bot_key = f"bot:{botID}"
     bot_data = r.hgetall(bot_key)
     if not bot_data:
-        return {"error": "Bot not found in this market"}
+        return {"error": "Bot not found"}
     bot_data["isActive"] = "True" if bot_data["isActive"] == "False" else "False"
     r.hset(bot_key, mapping=bot_data)
-    return {"marketID": marketID, "botID": botID, "isActive": bot_data["isActive"]}
+    return {"botID": botID, "isActive": bot_data["isActive"]}
 
+
+fig, ax = plt.subplots()
+xs, ys = [], []
+
+
+set_user_wallet(123, 1000, 0)
+def on_key(event):
+    if event.key == 'b':
+        price_history = get_price_history(1)
+        if price_history:
+            print(buy_coins(123, 1, float(price_history[-1]), 1))
+    elif event.key == 's':
+        price_history = get_price_history(1)
+        if price_history:
+            print(sell_coins(123, 1, float(price_history[-1]), 1))
+
+# Connect the key press event handler to the figure
+fig.canvas.mpl_connect('key_press_event', on_key)
+
+def animate(i):
+    xs.append(i)
+    ys.append(float(get_price_history(1)[-1]))
+    add_price_to_history(1, float(get_market_total(1,"usd")["total"]) / float(get_market_total(1,"bc")["total"]))
+    print(get_market_total(1,"usd")["total"])
+    print(get_market_total(1,"bc")["total"])
+    ax.clear()
+    ax.plot(xs, ys)
+
+ani = animation.FuncAnimation(fig, animate, interval=100)
+plt.show()
 
 def start_game():
-    """Initialize a new market game"""
     marketID = str(uuid.uuid4())
     r.set(f"market:{marketID}:totalUsd", 1000000)
     r.set(f"market:{marketID}:totalBC", 1000000)
-    return {"success": True, "marketID": marketID}
-
-def update_market(marketID, num_bots):
-    """Update the market"""
-    totalUsd = float(get_market_total(marketID, "usd")["total"] or 1)
-    totalBc = float(get_market_total(marketID, "bc")["total"] or 1)
-
-    for i in range(num_bots):
-        currentPrice = totalUsd / totalBc
-        if (bool(np.random.randint(0, 2))):
-            totalUsd -= currentPrice * 5
-            totalBc += 5
-        else:
-            totalUsd += currentPrice * 5
-            totalBc -= 5
-    set_market_totals(marketID, totalUsd, totalBc)
-    add_price_to_history(marketID, currentPrice)
-
-
 
 
 

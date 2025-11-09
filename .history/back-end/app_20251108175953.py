@@ -284,19 +284,57 @@ def start_game():
 
 def update_market(marketID, num_bots):
     """Update the market"""
-    totalUsd = float(get_market_total(marketID, "usd")["total"] or 1)
-    totalBc = float(get_market_total(marketID, "bc")["total"] or 1)
 
     for i in range(num_bots):
-        currentPrice = totalUsd / totalBc
-        if (bool(np.random.randint(0, 2))):
-            totalUsd -= currentPrice * 5
-            totalBc += 5
+        total_usd = get_market_total(marketID, "usd")["total"]
+        total_bc = get_market_total(marketID, "bc")["total"]
+        current_price = total_usd / total_bc
+        if bool(np.random.randint(0, 2)):
+            set_market_totals(marketID, total_usd - 5 * current_price, total_bc + 5)
         else:
-            totalUsd += currentPrice * 5
-            totalBc -= 5
-    set_market_totals(marketID, totalUsd, totalBc)
-    add_price_to_history(marketID, currentPrice)
+            set_market_totals(marketID, total_usd + 5 * current_price, total_bc - 5)
+        add_price_to_history(marketID, current_price)
+
+
+fig, ax = plt.subplots()
+xs, ys = [], []
+
+
+# Example market setup - you'll need to initialize this properly
+example_marketID = "1"
+set_user_wallet(example_marketID, 123, 1000, 0)
+
+def on_key(event):
+    if event.key == 'b':
+        price_history = get_price_history(example_marketID)
+        if price_history:
+            print(buy_coins(example_marketID, 123, 1, float(price_history[-1])))
+    elif event.key == 's':
+        price_history = get_price_history(example_marketID)
+        if price_history:
+            print(sell_coins(example_marketID, 123, 1, float(price_history[-1])))
+
+# Connect the key press event handler to the figure
+fig.canvas.mpl_connect('key_press_event', on_key)
+
+def animate(i):
+    xs.append(i)
+    price_history = get_price_history(example_marketID)
+    if price_history:
+        ys.append(float(price_history[-1]))
+        market_usd = float(get_market_total(example_marketID,"usd")["total"] or 1)
+        market_bc = float(get_market_total(example_marketID,"bc")["total"] or 1)
+        current_price = market_usd / market_bc
+        add_price_to_history(example_marketID, current_price)
+        print(get_market_total(example_marketID,"usd")["total"])
+        print(get_market_total(example_marketID,"bc")["total"])
+        update_market(example_marketID, 10)
+    ax.clear()
+    if xs and ys:
+        ax.plot(xs, ys)
+
+ani = animation.FuncAnimation(fig, animate, interval=100)
+plt.show()
 
 
 

@@ -1,5 +1,4 @@
 import redis
-import numpy as np
 from dotenv import load_dotenv
 import os
 import uuid
@@ -62,9 +61,8 @@ def get_price_history(marketID):
 
 
 
-def set_user_wallet(marketID, userID, num_dollars=1000, num_coins=0):
-    """Set user wallet for a specific market"""
-    key = f"market:{marketID}:user:{userID}"
+def set_user_wallet(userID, num_dollars=1000, num_coins=0):
+    key = f"user:{userID}"
     wallet_data = {
         "userID": userID,
         "walletUsd": num_dollars,
@@ -72,15 +70,11 @@ def set_user_wallet(marketID, userID, num_dollars=1000, num_coins=0):
     }
     r.hset(key, mapping=wallet_data)
     print(f"Set wallet for {key}")
-    return {"success": True, "marketID": marketID, "userID": userID, "walletUsd": num_dollars, "walletCoins": num_coins}
 
-def get_user_wallet(marketID, userID):
-    """Get user wallet for a specific market"""
-    key = f"market:{marketID}:user:{userID}"
+def get_user_wallet(userID):
+    key = f"user:{userID}"
     wallet_data = r.hgetall(key)
-    if not wallet_data:
-        return {"error": "User not found in this market"}
-    return {"marketID": marketID, "userID": wallet_data["userID"], "walletUsd": wallet_data["walletUsd"], "walletCoins": wallet_data["walletCoins"]}
+    return {"userID": wallet_data["userID"], "walletUsd": wallet_data["walletUsd"], "walletCoins": wallet_data["walletCoins"]}
 
 def buy_coins(marketID, userID, num_coins, current_price):
     """
@@ -150,77 +144,26 @@ def buy_coins(marketID, userID, num_coins, current_price):
         "num_coins": num_coins
     }
 
-def sell_coins(marketID, userID, num_coins, current_price):
-    """
-    Atomically sell coins using Redis WATCH and transaction.
-    When user sells coins: user gives coins to market (market totalBC increases)
-    and takes USD from market (market totalUsd decreases).
-    """
-    user_key = f"market:{marketID}:user:{userID}"
-    market_usd_key = f"market:{marketID}:totalUsd"
-    market_bc_key = f"market:{marketID}:totalBC"
-    
+def sell_coins(userID, num_coins, current_price, marketID = 1):
+    key = f"user:{userID}"
+    wallet_data = r.hgetall(key)
+    if not wallet_data:
+        return {"error": "User not found"}
     revenue = num_coins * current_price
-    
-    # Use WATCH and transaction for atomicity
-    pipe = r.pipeline()
-    while True:
-        try:
-            # Watch the keys we'll modify
-            pipe.watch(user_key, market_usd_key, market_bc_key)
-            
-            # Read current values
-            wallet_data = r.hgetall(user_key)
-            if not wallet_data:
-                pipe.reset()
-                return {"error": "User not found in this market"}
-            
-            wallet_usd = float(wallet_data.get("walletUsd", 0))
-            wallet_coins = float(wallet_data.get("walletCoins", 0))
-            market_usd = float(r.get(market_usd_key) or 0)
-            market_bc = float(r.get(market_bc_key) or 0)
-            
-            # Validate
-            if wallet_coins < num_coins:
-                pipe.reset()
-                return {"error": "Insufficient coins"}
-            
-            if market_usd < revenue:
-                pipe.reset()
-                return {"error": "Insufficient USD in market"}
-            
-            # Start transaction
-            pipe.multi()
-            
-            # Update user wallet: add USD, subtract coins
-            pipe.hset(user_key, "walletUsd", wallet_usd + revenue)
-            pipe.hset(user_key, "walletCoins", wallet_coins - num_coins)
-            
-            # Update market: subtract USD (user took it), add coins (user gave them)
-            pipe.set(market_usd_key, market_usd - revenue)
-            pipe.set(market_bc_key, market_bc + num_coins)
-            
-            # Execute transaction
-            pipe.execute()
-            break
-            
-        except redis.WatchError:
-            # Retry if another transaction modified our watched keys
-            pipe.reset()
-            continue
-    
-    return {
-        "success": True,
-        "revenue": revenue,
-        "new_usd": wallet_usd + revenue,
-        "new_coins": wallet_coins - num_coins,
-        "current_price": current_price,
-        "num_coins": num_coins
-    }
+    if float(wallet_data["walletCoins"]) - num_coins < 0:
+        return {"error": "Insufficient coins"}
+    wallet_data["walletUsd"] = float(wallet_data["walletUsd"]) + revenue
+    wallet_data["walletCoins"] = float(wallet_data["walletCoins"]) - num_coins
+    new_totalUsd = float(get_market_total(marketID,"usd")["total"]) + revenue
+    new_total_coins = float(get_market_total(marketID,"bc")["total"]) - num_coins
+    set_market_totals(marketID, new_totalUsd, new_total_coins)
 
-def create_bot(marketID, botID, botType, **attributes):
-    """Create a bot as a separate entity in Redis, scoped to a market"""
-    bot_key = f"market:{marketID}:bot:{botID}"
+    r.hset(key, mapping=wallet_data)
+    return {"revenue": revenue, "new_usd": wallet_data["walletUsd"], "new_coins": wallet_data["walletCoins"], "current_price": current_price, "num_coins": num_coins}
+
+def create_bot(botID, botType, **attributes):
+    """Create a bot as a separate entity in Redis"""
+    bot_key = f"bot:{botID}"
     bot_data = {
         "botID": botID,
         "botType": botType,
@@ -230,75 +173,85 @@ def create_bot(marketID, botID, botType, **attributes):
     bot_data.update(attributes)
     try:
         r.hset(bot_key, mapping=bot_data)
-        return {"success": True, "marketID": marketID, "botID": botID, "botType": botType, **bot_data}
+        return {"success": True, "botID": botID, "botType": botType, **bot_data}
     except Exception as e:
         return {"error": str(e)}
 
-def get_bot(marketID, botID):
-    """Get bot data by botID for a specific market"""
-    bot_key = f"market:{marketID}:bot:{botID}"
+def get_bot(botID):
+    """Get bot data by botID"""
+    bot_key = f"bot:{botID}"
     bot_data = r.hgetall(bot_key)
     if not bot_data:
-        return {"error": "Bot not found in this market"}
+        return {"error": "Bot not found"}
     return bot_data
 
-def attach_bot_to_user(marketID, userID, botID):
-    """Attach an existing bot to a user in a specific market"""
+def attach_bot_to_user(userID, botID):
+    """Attach an existing bot to a user"""
     # Check if bot exists
-    bot_data = get_bot(marketID, botID)
+    bot_data = get_bot(botID)
     if "error" in bot_data:
         return bot_data
     
     # Add botID to user's bot list (using a set to avoid duplicates)
-    user_bots_key = f"market:{marketID}:user:{userID}:bots"
+    user_bots_key = f"user:{userID}:bots"
     try:
         r.sadd(user_bots_key, botID)
-        return {"success": True, "marketID": marketID, "userID": userID, "botID": botID}
+        return {"success": True, "userID": userID, "botID": botID}
     except Exception as e:
         return {"error": str(e)}
 
-def get_user_bots(marketID, userID):
-    """Get all bot IDs attached to a user in a specific market"""
-    user_bots_key = f"market:{marketID}:user:{userID}:bots"
+def get_user_bots(userID):
+    """Get all bot IDs attached to a user"""
+    user_bots_key = f"user:{userID}:bots"
     bot_ids = r.smembers(user_bots_key)
-    return {"marketID": marketID, "userID": userID, "botIDs": list(bot_ids)}
+    return {"userID": userID, "botIDs": list(bot_ids)}
 
 
-def toggle_bot(marketID, botID):
-    """Toggle a bot's active status for a specific market"""
-    bot_key = f"market:{marketID}:bot:{botID}"
+def toggle_bot(botID):
+    """Toggle a bot's active status"""
+    bot_key = f"bot:{botID}"
     bot_data = r.hgetall(bot_key)
     if not bot_data:
-        return {"error": "Bot not found in this market"}
+        return {"error": "Bot not found"}
     bot_data["isActive"] = "True" if bot_data["isActive"] == "False" else "False"
     r.hset(bot_key, mapping=bot_data)
-    return {"marketID": marketID, "botID": botID, "isActive": bot_data["isActive"]}
+    return {"botID": botID, "isActive": bot_data["isActive"]}
 
+
+fig, ax = plt.subplots()
+xs, ys = [], []
+
+
+set_user_wallet(123, 1000, 0)
+def on_key(event):
+    if event.key == 'b':
+        price_history = get_price_history(1)
+        if price_history:
+            print(buy_coins(123, 1, float(price_history[-1]), 1))
+    elif event.key == 's':
+        price_history = get_price_history(1)
+        if price_history:
+            print(sell_coins(123, 1, float(price_history[-1]), 1))
+
+# Connect the key press event handler to the figure
+fig.canvas.mpl_connect('key_press_event', on_key)
+
+def animate(i):
+    xs.append(i)
+    ys.append(float(get_price_history(1)[-1]))
+    add_price_to_history(1, float(get_market_total(1,"usd")["total"]) / float(get_market_total(1,"bc")["total"]))
+    print(get_market_total(1,"usd")["total"])
+    print(get_market_total(1,"bc")["total"])
+    ax.clear()
+    ax.plot(xs, ys)
+
+ani = animation.FuncAnimation(fig, animate, interval=100)
+plt.show()
 
 def start_game():
-    """Initialize a new market game"""
     marketID = str(uuid.uuid4())
     r.set(f"market:{marketID}:totalUsd", 1000000)
     r.set(f"market:{marketID}:totalBC", 1000000)
-    return {"success": True, "marketID": marketID}
-
-def update_market(marketID, num_bots):
-    """Update the market"""
-    totalUsd = float(get_market_total(marketID, "usd")["total"] or 1)
-    totalBc = float(get_market_total(marketID, "bc")["total"] or 1)
-
-    for i in range(num_bots):
-        currentPrice = totalUsd / totalBc
-        if (bool(np.random.randint(0, 2))):
-            totalUsd -= currentPrice * 5
-            totalBc += 5
-        else:
-            totalUsd += currentPrice * 5
-            totalBc -= 5
-    set_market_totals(marketID, totalUsd, totalBc)
-    add_price_to_history(marketID, currentPrice)
-
-
 
 
 
