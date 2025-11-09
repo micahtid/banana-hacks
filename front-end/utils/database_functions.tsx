@@ -71,7 +71,7 @@ export interface Game {
   isEnded: boolean;
   users: User[];
   coin: number[];
-  interactions: Interaction[];
+  interactions: number; // Count of total trades
   eventTimer: Date;
   startTime: Date | null;
   endTime: Date | null;

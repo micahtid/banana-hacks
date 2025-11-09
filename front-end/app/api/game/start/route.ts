@@ -45,6 +45,37 @@ export async function POST(request: NextRequest) {
       startedAt: Date.now(),
     });
 
+    // ✨ NEW: Start background market updates via FastAPI
+    try {
+      const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
+      const durationMinutes = parseInt(gameData.duration || '300');
+      const durationSeconds = durationMinutes * 60; // Convert minutes to seconds for FastAPI
+      
+      const fastApiResponse = await fetch(`${backendUrl}/api/game/start-market`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          gameId,
+          duration: durationSeconds,  // Now in seconds!
+          totalUsd: 1000000,
+          totalBc: 1000000,
+          initialPrice: parseFloat(gameData.coinPrice || '1.0'),
+          updateInterval: 1.0
+        })
+      });
+
+      if (!fastApiResponse.ok) {
+        console.error('Failed to start market updates:', await fastApiResponse.text());
+        // Continue anyway - game can still work with static prices
+      } else {
+        const marketData = await fastApiResponse.json();
+        console.log('Market updates started:', marketData);
+      }
+    } catch (error) {
+      console.error('Error calling FastAPI:', error);
+      // Continue anyway - game can still work without market updates
+    }
+
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('Error starting game:', error);

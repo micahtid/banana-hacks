@@ -22,7 +22,7 @@ export async function POST(request: NextRequest) {
       creatorId: userId,
       isStarted: false,
       isEnded: false,
-      duration: duration || 300,
+      duration: duration || 30,  // Default: 30 minutes (not 300!)
       maxPlayers: maxPlayers || 4,
       players: JSON.stringify([{
         userId,
@@ -33,7 +33,7 @@ export async function POST(request: NextRequest) {
         lastInteractionV: 0,
         lastInteractionT: new Date().toISOString(),
       }]),
-      coinPrice: 100,
+      coinPrice: 1.0,  // Match market initial price (1M USD / 1M BC = $1.00)
       interactions: 0,
       eventTimer: 0,
       createdAt: Date.now(),
