@@ -149,12 +149,95 @@ async def run_market_updates(game_id: str, duration: int, update_interval: float
         # Game finished
         logger.info(f"✅ Game {game_id} completed after {duration} seconds, {update_count} updates")
         
-        # Mark game as ended in Redis
+        # Mark game as ended in Redis and cache final leaderboard
         try:
             r = await asyncio.to_thread(get_redis_connection)
             await asyncio.to_thread(r.hset, f"game:{game_id}", "isEnded", "true")
+            
+            # Calculate and cache final leaderboard with final price
+            market = Market.load_from_redis(game_id)
+            if market:
+                final_price = market.market_data.current_price
+                game_data = await asyncio.to_thread(r.hgetall, f"game:{game_id}")
+                
+                if game_data:
+                    import json
+                    players = json.loads(game_data.get('players', '[]'))
+                    
+                    # Get all bots for the game
+                    bots_set_key = f"bots:{game_id}"
+                    bot_ids = await asyncio.to_thread(r.smembers, bots_set_key)
+                    
+                    # Build a map of user_id -> list of bots
+                    user_bots_map = {}
+                    for bot_id_bytes in bot_ids:
+                        bot_id = bot_id_bytes.decode('utf-8') if isinstance(bot_id_bytes, bytes) else bot_id_bytes
+                        bot = Bot.load_from_redis(game_id, bot_id)
+                        if bot and bot.user_id:
+                            if bot.user_id not in user_bots_map:
+                                user_bots_map[bot.user_id] = []
+                            user_bots_map[bot.user_id].append(bot)
+                    
+                    # Calculate final leaderboard
+                    final_leaderboard = []
+                    for player in players:
+                        player_id = player.get('userId') or player.get('playerId')
+                        player_name = player.get('userName') or player.get('playerName', 'Unknown')
+                        
+                        usd_balance = float(player.get('usd', player.get('usdBalance', 0)))
+                        bc_balance = float(player.get('coins', player.get('coinBalance', 0)))
+                        
+                        # Add minion balances
+                        total_minion_usd = 0.0
+                        total_minion_bc = 0.0
+                        if player_id in user_bots_map:
+                            for bot in user_bots_map[player_id]:
+                                total_minion_usd += bot.usd
+                                total_minion_bc += bot.bc
+                        
+                        total_usd = usd_balance + total_minion_usd
+                        total_bc = bc_balance + total_minion_bc
+                        wealth = total_usd + (total_bc * final_price)
+                        
+                        final_leaderboard.append({
+                            'userId': player_id,
+                            'userName': player_name,
+                            'usdBalance': total_usd,
+                            'coinBalance': total_bc,
+                            'wealth': wealth
+                        })
+                    
+                    # Sort by wealth (descending)
+                    final_leaderboard.sort(key=lambda x: x['wealth'], reverse=True)
+                    
+                    # Cache final leaderboard permanently (no expiration)
+                    final_leaderboard_key = f"final_leaderboard:{game_id}"
+                    await asyncio.to_thread(r.set, final_leaderboard_key, json.dumps(final_leaderboard))
+                    await asyncio.to_thread(r.set, f"{final_leaderboard_key}:price", str(final_price))
+                    
+                    logger.info(f"Cached final leaderboard for game {game_id} with {len(final_leaderboard)} players")
+                    
+                    # Stop all bots for this game
+                    bots_set_key = f"bots:{game_id}"
+                    bot_ids = await asyncio.to_thread(r.smembers, bots_set_key)
+                    
+                    stopped_count = 0
+                    for bot_id_bytes in bot_ids:
+                        bot_id = bot_id_bytes.decode('utf-8') if isinstance(bot_id_bytes, bytes) else bot_id_bytes
+                        try:
+                            bot = Bot.load_from_redis(game_id, bot_id)
+                            if bot and bot.is_toggled:
+                                # Turn off the bot
+                                bot.is_toggled = False
+                                bot.save_to_redis(game_id)
+                                stopped_count += 1
+                                logger.debug(f"Stopped bot {bot_id} for ended game {game_id}")
+                        except Exception as bot_error:
+                            logger.warning(f"Error stopping bot {bot_id}: {bot_error}")
+                    
+                    logger.info(f"Stopped {stopped_count} bots for ended game {game_id}")
         except Exception as e:
-            logger.error(f"Error marking game {game_id} as ended: {e}")
+            logger.error(f"Error marking game {game_id} as ended or caching final leaderboard: {e}")
         
     except asyncio.CancelledError:
         logger.info(f"🛑 Game {game_id} was cancelled after {update_count} updates")
@@ -399,18 +482,29 @@ async def buy_coins(request: TradeRequest):
             # Calculate trade
             cost = request.amount * current_price
             
+            # Check balance (handle both field name conventions) - ONLY use user's balances (not minion balances)
+            user_usd = user_data.get('usd', user_data.get('usdBalance', 0))
+            user_coins = user_data.get('coins', user_data.get('coinBalance', 0))
+            
             # Check for sufficient funds - silently fail if insufficient (don't raise exception)
-            if user_data['usd'] < cost:
+            if user_usd < cost:
                 return {
                     "success": False,
                     "message": "Insufficient USD",
-                    "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
-                    "newCoins": user_data.get('coins', user_data.get('coinBalance', 0))
+                    "newUsd": user_usd,
+                    "newCoins": user_coins
                 }
             
-            # Execute trade - prevent negative balances
-            user_data['usd'] = max(0.0, user_data['usd'] - cost)
-            user_data['coins'] = max(0.0, user_data['coins'] + request.amount)
+            # Execute trade (update both field name conventions) - prevent negative balances - ONLY update user's balances
+            if 'usd' in user_data:
+                user_data['usd'] = max(0.0, user_usd - cost)
+            if 'usdBalance' in user_data:
+                user_data['usdBalance'] = max(0.0, user_usd - cost)
+            
+            if 'coins' in user_data:
+                user_data['coins'] = max(0.0, user_coins + request.amount)
+            if 'coinBalance' in user_data:
+                user_data['coinBalance'] = max(0.0, user_coins + request.amount)
             user_data['lastInteractionT'] = datetime.now().isoformat()
             user_data['lastInteractionV'] = market.current_tick
             
@@ -441,14 +535,18 @@ async def buy_coins(request: TradeRequest):
             
             logger.info(f"User {request.userId} bought {request.amount} BC for ${cost:.2f} (attempt {retry_count + 1})")
             
+            # Get updated balances (handle both field name conventions)
+            updated_usd = user_data.get('usd', user_data.get('usdBalance', 0))
+            updated_coins = user_data.get('coins', user_data.get('coinBalance', 0))
+            
             return {
                 "success": True,
                 "action": "buy",
                 "amount": request.amount,
                 "cost": cost,
                 "price": current_price,
-                "newUsd": user_data['usd'],
-                "newCoins": user_data['coins']
+                "newUsd": updated_usd,
+                "newCoins": updated_coins
             }
             
         except HTTPException:
@@ -600,155 +698,169 @@ async def sell_coins(request: TradeRequest):
 async def buy_bot(request: BotBuyRequest):
     """
     Purchase a minion for a user.
+    Retries until success if transaction fails, but only if user has sufficient funds.
     """
-    try:
-        # Get user wallet from Redis
-        r = get_redis_connection()
-        game_data = r.hgetall(f"game:{request.gameId}")
-        
-        if not game_data:
-            raise HTTPException(status_code=404, detail="Game not found")
-        
-        import json
-        players = json.loads(game_data.get('players', '[]'))
-        
-        # Find the user (handle both userId and playerId fields)
-        user_data = None
-        user_index = None
-        for i, player in enumerate(players):
-            # Check both userId and playerId fields for compatibility
-            player_id = player.get('userId') or player.get('playerId')
-            if player_id == request.userId:
-                user_data = player
-                user_index = i
-                break
-        
-        if not user_data:
-            raise HTTPException(status_code=404, detail="User not found in game")
-        
-        # Check if user has enough USD (handle both usd and usdBalance fields)
-        user_usd = user_data.get('usd', user_data.get('usdBalance', 0))
-        if user_usd < request.cost:
-            raise HTTPException(status_code=400, detail="Insufficient USD")
-        
-        # Map front-end minion types to backend bot types
-        bot_type_map = {
-            'premade': 'random',
-            'custom': 'custom',
-            'hodler': 'mean_reversion',
-            'scalper': 'momentum',
-            'swing': 'momentum',
-            'arbitrage': 'market_maker',
-            'dip': 'mean_reversion',
-            'momentum': 'momentum'
-        }
-        
-        backend_bot_type = bot_type_map.get(request.botType, 'random')
-        
-        # Generate custom strategy code if minion type is custom
-        custom_strategy_code = None
-        if backend_bot_type == 'custom':
-            if not request.customPrompt:
-                raise HTTPException(status_code=400, detail="Custom prompt required for custom minion type")
+    # Retry loop - keep trying until transaction succeeds
+    max_retries = 100  # Prevent infinite loops
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Get user wallet from Redis (reload each retry to get fresh data)
+            r = get_redis_connection()
+            game_data = r.hgetall(f"game:{request.gameId}")
             
-            logger.info(f"Generating custom strategy for prompt: {request.customPrompt[:100]}...")
-            try:
-                custom_strategy_code = generate_custom_bot_strategy(request.customPrompt)
-                logger.info(f"Generated custom strategy code ({len(custom_strategy_code)} chars)")
-            except Exception as e:
-                logger.error(f"Failed to generate custom strategy: {e}")
-                raise HTTPException(status_code=500, detail=f"Failed to generate custom strategy: {str(e)}")
-        
-        # Deduct cost from user FIRST (before minion creation) - prevent negative balances
-        if 'usd' in user_data:
-            user_data['usd'] = max(0.0, user_data['usd'] - request.cost)
-        if 'usdBalance' in user_data:
-            user_data['usdBalance'] = max(0.0, user_data['usdBalance'] - request.cost)
-        
-        # Add minion entry to user's bots list
-        if 'bots' not in user_data:
-            user_data['bots'] = []
-        
-        # Generate temporary minion ID for the entry
-        import uuid
-        bot_id = str(uuid.uuid4())
-        
-        # Use the display name if provided, otherwise fall back to bot type
-        display_name = request.botName if request.botName else backend_bot_type
-        
-        user_data['bots'].append({
-            'botId': bot_id,
-            'botName': display_name
-        })
-        
-        logger.info(f"After adding minion, user has {len(user_data['bots'])} minions: {user_data['bots']}")
-        logger.info(f"User index: {user_index}, Total players: {len(players)}")
-        
-        # Update players in Redis FIRST
-        players[user_index] = user_data
-        players_json = json.dumps(players)
-        logger.info(f"About to save. players[{user_index}]['bots'] = {players[user_index].get('bots', [])}")
-        logger.info(f"Full players array: {players}")
-        r.hset(f"game:{request.gameId}", "players", players_json)
-        
-        # Verify the save worked
-        saved_data = r.hget(f"game:{request.gameId}", "players")
-        saved_players = json.loads(saved_data) if saved_data else []
-        logger.info(f"After save, Redis has {len(saved_players[0].get('bots', []))} minions for player 0")
-        
-        # NOW create the actual minion (this will use the bot_id we generated)
-        # Call bot_operations directly but pass the bot_id we already created
-        from bot import Bot
-        # Allocate resources: 70% of purchase price as starting capital (increased from 50% for better bot performance)
-        # This gives bots more resources to trade effectively
-        bot_starting_capital = request.cost * 0.7
-        bot = Bot(
-            bot_id=bot_id,
-            is_toggled=True,
-            usd_given=bot_starting_capital,
-            usd=bot_starting_capital,
-            bc=0.0,
-            bot_type=backend_bot_type,
-            user_id=request.userId,
-            custom_strategy_code=custom_strategy_code,
-            bot_name=display_name
-        )
-        
-        # Save minion to Redis
-        bot.save_to_redis(request.gameId)
-        
-        # Start minion running in a separate thread
-        import threading
-        bot_thread = threading.Thread(
-            target=bot.run,
-            args=(request.gameId,),
-            daemon=True,
-            name=f"Bot-{bot_id}"
-        )
-        bot_thread.start()
-        
-        logger.info(f"Minion {bot_id} started for user {request.userId}")
-        
-        logger.info(f"User {request.userId} purchased minion {bot_id} for ${request.cost}")
-        
-        # Get minion details
-        bot = Bot.load_from_redis(request.gameId, bot_id)
-        bot_data = bot.to_dict() if bot else {}
-        
-        return {
-            "success": True,
-            "botId": bot_id,
-            "botType": backend_bot_type,
-            "cost": request.cost,
-            "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
-            "bot": bot_data
-        }
-        
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error buying minion: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+            if not game_data:
+                raise HTTPException(status_code=404, detail="Game not found")
+            
+            import json
+            players = json.loads(game_data.get('players', '[]'))
+            
+            # Find the user (handle both userId and playerId fields)
+            user_data = None
+            user_index = None
+            for i, player in enumerate(players):
+                # Check both userId and playerId fields for compatibility
+                player_id = player.get('userId') or player.get('playerId')
+                if player_id == request.userId:
+                    user_data = player
+                    user_index = i
+                    break
+            
+            if not user_data:
+                raise HTTPException(status_code=404, detail="User not found in game")
+            
+            # Check if user has enough USD (handle both usd and usdBalance fields)
+            # This check happens on each retry to ensure funds are still sufficient
+            user_usd = user_data.get('usd', user_data.get('usdBalance', 0))
+            if user_usd < request.cost:
+                raise HTTPException(status_code=400, detail="Insufficient USD")
+            
+            # Map front-end minion types to backend bot types
+            bot_type_map = {
+                'premade': 'random',
+                'custom': 'custom',
+                'hodler': 'mean_reversion',
+                'scalper': 'momentum',
+                'swing': 'momentum',
+                'arbitrage': 'market_maker',
+                'dip': 'mean_reversion',
+                'momentum': 'momentum'
+            }
+            
+            backend_bot_type = bot_type_map.get(request.botType, 'random')
+            
+            # Generate custom strategy code if minion type is custom
+            custom_strategy_code = None
+            if backend_bot_type == 'custom':
+                if not request.customPrompt:
+                    raise HTTPException(status_code=400, detail="Custom prompt required for custom minion type")
+                
+                logger.info(f"Generating custom strategy for prompt: {request.customPrompt[:100]}...")
+                try:
+                    custom_strategy_code = generate_custom_bot_strategy(request.customPrompt)
+                    logger.info(f"Generated custom strategy code ({len(custom_strategy_code)} chars)")
+                except Exception as e:
+                    logger.error(f"Failed to generate custom strategy: {e}")
+                    raise HTTPException(status_code=500, detail=f"Failed to generate custom strategy: {str(e)}")
+            
+            # Deduct cost from user FIRST (before minion creation) - prevent negative balances
+            if 'usd' in user_data:
+                user_data['usd'] = max(0.0, user_data['usd'] - request.cost)
+            if 'usdBalance' in user_data:
+                user_data['usdBalance'] = max(0.0, user_data['usdBalance'] - request.cost)
+            
+            # Add minion entry to user's bots list
+            if 'bots' not in user_data:
+                user_data['bots'] = []
+            
+            # Generate temporary minion ID for the entry
+            import uuid
+            bot_id = str(uuid.uuid4())
+            
+            # Use the display name if provided, otherwise fall back to bot type
+            display_name = request.botName if request.botName else backend_bot_type
+            
+            user_data['bots'].append({
+                'botId': bot_id,
+                'botName': display_name
+            })
+            
+            logger.info(f"After adding minion, user has {len(user_data['bots'])} minions: {user_data['bots']}")
+            logger.info(f"User index: {user_index}, Total players: {len(players)}")
+            
+            # Update players in Redis FIRST
+            players[user_index] = user_data
+            players_json = json.dumps(players)
+            logger.info(f"About to save. players[{user_index}]['bots'] = {players[user_index].get('bots', [])}")
+            logger.info(f"Full players array: {players}")
+            r.hset(f"game:{request.gameId}", "players", players_json)
+            
+            # Verify the save worked
+            saved_data = r.hget(f"game:{request.gameId}", "players")
+            saved_players = json.loads(saved_data) if saved_data else []
+            logger.info(f"After save, Redis has {len(saved_players[0].get('bots', []))} minions for player 0")
+            
+            # NOW create the actual minion (this will use the bot_id we generated)
+            # Call bot_operations directly but pass the bot_id we already created
+            from bot import Bot
+            # Allocate resources: 70% of purchase price as starting capital (increased from 50% for better bot performance)
+            # This gives bots more resources to trade effectively
+            bot_starting_capital = request.cost * 0.7
+            bot = Bot(
+                bot_id=bot_id,
+                is_toggled=True,
+                usd_given=bot_starting_capital,
+                usd=bot_starting_capital,
+                bc=0.0,
+                bot_type=backend_bot_type,
+                user_id=request.userId,
+                custom_strategy_code=custom_strategy_code,
+                bot_name=display_name
+            )
+            
+            # Save minion to Redis
+            bot.save_to_redis(request.gameId)
+            
+            # Start minion running in a separate thread
+            import threading
+            bot_thread = threading.Thread(
+                target=bot.run,
+                args=(request.gameId,),
+                daemon=True,
+                name=f"Bot-{bot_id}"
+            )
+            bot_thread.start()
+            
+            logger.info(f"Minion {bot_id} started for user {request.userId} (attempt {retry_count + 1})")
+            
+            logger.info(f"User {request.userId} purchased minion {bot_id} for ${request.cost}")
+            
+            # Get minion details
+            bot = Bot.load_from_redis(request.gameId, bot_id)
+            bot_data = bot.to_dict() if bot else {}
+            
+            return {
+                "success": True,
+                "botId": bot_id,
+                "botType": backend_bot_type,
+                "cost": request.cost,
+                "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
+                "bot": bot_data
+            }
+            
+        except HTTPException:
+            raise
+        except Exception as e:
+            retry_count += 1
+            if retry_count >= max_retries:
+                logger.error(f"Error purchasing minion after {max_retries} retries: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+            # Wait a short time before retrying (exponential backoff)
+            import asyncio
+            await asyncio.sleep(0.1 * retry_count)  # 0.1s, 0.2s, 0.3s, etc.
+            logger.warning(f"Bot purchase failed, retrying ({retry_count}/{max_retries}): {e}")
+            continue
 
 
 @app.post("/api/bot/toggle")
@@ -825,21 +937,56 @@ async def get_wealth_leaderboard(game_id: str):
     Wealth = USD balance + (BananaCoin balance * current_price)
     
     Returns a sorted leaderboard by wealth (descending).
+    If the game has ended, returns the cached final leaderboard (static for all players).
     """
     try:
-        # Load market to get current price
-        market = Market.load_from_redis(game_id)
-        if not market:
-            raise HTTPException(status_code=404, detail="Market not found")
-        
-        current_price = market.market_data.current_price
-        
-        # Get game data from Redis
         r = get_redis_connection()
         game_data = r.hgetall(f"game:{game_id}")
         
         if not game_data:
             raise HTTPException(status_code=404, detail="Game not found")
+        
+        # Check if game has ended - if so, return cached final leaderboard
+        is_ended = game_data.get('isEnded', 'false').lower() == 'true'
+        if is_ended:
+            final_leaderboard_key = f"final_leaderboard:{game_id}"
+            cached_leaderboard = r.get(final_leaderboard_key)
+            
+            if cached_leaderboard:
+                import json
+                try:
+                    final_leaderboard = json.loads(cached_leaderboard)
+                    logger.debug(f"Returning cached final leaderboard for ended game {game_id}")
+                    return {
+                        "success": True,
+                        "leaderboard": final_leaderboard,
+                        "isFinal": True
+                    }
+                except json.JSONDecodeError:
+                    # Cache is corrupted, fall through to recalculate
+                    logger.warning(f"Cached final leaderboard for {game_id} is corrupted, recalculating")
+            else:
+                # No cached leaderboard, but game has ended - recalculate and cache it
+                logger.info(f"Game {game_id} has ended but no cached leaderboard found, calculating final leaderboard")
+                # Load market to get final price (use current price as final)
+                market = Market.load_from_redis(game_id)
+                if market:
+                    final_price = market.market_data.current_price
+                else:
+                    # Fallback: try to get price from cached final price
+                    final_price_str = r.get(f"final_leaderboard:{game_id}:price")
+                    final_price = float(final_price_str) if final_price_str else 1.0
+                
+                # Recalculate final leaderboard (code continues below)
+                current_price = final_price
+        else:
+            # Game is still active - calculate current leaderboard
+            # Load market to get current price
+            market = Market.load_from_redis(game_id)
+            if not market:
+                raise HTTPException(status_code=404, detail="Market not found")
+            
+            current_price = market.market_data.current_price
         
         import json
         players = json.loads(game_data.get('players', '[]'))

@@ -2,125 +2,145 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getRedisClient } from '@/utils/redis';
 
 export async function POST(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { gameId, userId, amount } = body;
+  // Read request body once (can only be read once)
+  const body = await request.json();
+  const { gameId, userId, amount } = body;
 
-    if (!gameId || !userId || amount === undefined) {
-      return NextResponse.json(
-        { error: 'Missing required fields: gameId, userId, amount' },
-        { status: 400 }
-      );
-    }
-
-    if (amount <= 0) {
-      return NextResponse.json(
-        { error: 'Amount must be positive' },
-        { status: 400 }
-      );
-    }
-
-    const redis = getRedisClient();
-    const gameExists = await redis.exists(`game:${gameId}`);
-
-    if (!gameExists) {
-      return NextResponse.json(
-        { error: 'Game not found' },
-        { status: 404 }
-      );
-    }
-
-    const gameData = await redis.hgetall(`game:${gameId}`);
-    const players = JSON.parse(gameData.players || '[]');
-    
-    // ✨ NEW: Get dynamic price from FastAPI if available
-    let coinPrice = parseFloat(gameData.coinPrice || '100');
-    try {
-      const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
-      const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`);
-      
-      if (marketResponse.ok) {
-        const marketData = await marketResponse.json();
-        coinPrice = marketData.currentPrice;
-        console.log(`Using dynamic price: $${coinPrice.toFixed(2)}`);
-      } else {
-        console.log(`Using static price: $${coinPrice.toFixed(2)} (market data not available)`);
-      }
-    } catch (error) {
-      console.log(`Using static price: $${coinPrice.toFixed(2)} (FastAPI not reachable)`);
-      // Continue with static price if FastAPI is not available
-    }
-
-    // Support both old (userId) and new (playerId) field names
-    const playerIndex = players.findIndex((p: any) => (p.playerId || p.userId) === userId);
-    if (playerIndex === -1) {
-      return NextResponse.json(
-        { error: 'Player not found in game' },
-        { status: 404 }
-      );
-    }
-
-    const player = players[playerIndex];
-
-    // Support both old and new field names
-    const currentUsd = player.usdBalance ?? player.usd ?? 0;
-    const currentCoins = player.coinBalance ?? player.coins ?? 0;
-
-    // If trying to sell more than available, sell all available coins
-    const actualAmount = Math.min(amount, currentCoins);
-    
-    if (actualAmount <= 0) {
-      return NextResponse.json({
-        success: false,
-        player,
-        coinPrice,
-        totalRevenue: 0,
-        reason: 'No coins to sell'
-      });
-    }
-
-    const totalRevenue = actualAmount * coinPrice;
-
-    // Update using new field names (and maintain old for backward compatibility)
-    // Prevent negative balances (use actualAmount, not amount)
-    player.coinBalance = Math.max(0, currentCoins - actualAmount);
-    player.usdBalance = Math.max(0, currentUsd + totalRevenue);
-    player.coins = player.coinBalance;
-    player.usd = player.usdBalance;
-    player.lastInteractionValue = actualAmount;
-    player.lastInteractionTime = new Date().toISOString();
-    player.lastInteractionV = actualAmount;
-    player.lastInteractionT = player.lastInteractionTime;
-
-    // Update players
-    await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));
-
-    // Track the interaction
-    // ⚠️ CRITICAL: Re-read interactions from Redis to avoid race condition with bot trades
-    const freshGameData = await redis.hget(`game:${gameId}`, 'interactions');
-    const interactions = JSON.parse(freshGameData || '[]');
-    const playerName = player.playerName || player.userName;
-    interactions.push({
-      name: playerName,  // Required for front-end
-      type: 'sell',      // Required for front-end
-      value: Math.round(actualAmount * 100),  // Amount in cents
-      timestamp: new Date().toISOString(),  // Add timestamp
-      interactionName: playerName,
-      interactionDescription: `${playerName} sold ${actualAmount} BC for $${totalRevenue.toFixed(2)}${actualAmount < amount ? ` (requested ${amount})` : ''}`
-    });
-    await redis.hset(`game:${gameId}`, 'interactions', JSON.stringify(interactions));
-
-    return NextResponse.json({ 
-      success: true, 
-      player,
-      coinPrice,  // Include price used for transparency
-      totalRevenue 
-    });
-  } catch (error) {
-    console.error('Error selling coins:', error);
+  if (!gameId || !userId || amount === undefined) {
     return NextResponse.json(
-      { error: 'Failed to sell coins' },
-      { status: 500 }
+      { error: 'Missing required fields: gameId, userId, amount' },
+      { status: 400 }
     );
   }
+
+  if (amount <= 0) {
+    return NextResponse.json(
+      { error: 'Amount must be positive' },
+      { status: 400 }
+    );
+  }
+
+  // Retry loop - keep trying until transaction succeeds
+  const maxRetries = 100;
+  let retryCount = 0;
+  
+  while (retryCount < maxRetries) {
+    try {
+      const redis = getRedisClient();
+      const gameExists = await redis.exists(`game:${gameId}`);
+
+      if (!gameExists) {
+        return NextResponse.json(
+          { error: 'Game not found' },
+          { status: 404 }
+        );
+      }
+
+      // Reload game data on each retry to get fresh state
+      const gameData = await redis.hgetall(`game:${gameId}`);
+      const players = JSON.parse(gameData.players || '[]');
+      
+      // ✨ NEW: Get dynamic price from FastAPI if available
+      let coinPrice = parseFloat(gameData.coinPrice || '100');
+      try {
+        const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
+        const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`);
+        
+        if (marketResponse.ok) {
+          const marketData = await marketResponse.json();
+          coinPrice = marketData.currentPrice;
+          console.log(`Using dynamic price: $${coinPrice.toFixed(2)}`);
+        } else {
+          console.log(`Using static price: $${coinPrice.toFixed(2)} (market data not available)`);
+        }
+      } catch (error) {
+        console.log(`Using static price: $${coinPrice.toFixed(2)} (FastAPI not reachable)`);
+        // Continue with static price if FastAPI is not available
+      }
+
+      // Support both old (userId) and new (playerId) field names
+      const playerIndex = players.findIndex((p: any) => (p.playerId || p.userId) === userId);
+      if (playerIndex === -1) {
+        return NextResponse.json(
+          { error: 'Player not found in game' },
+          { status: 404 }
+        );
+      }
+
+      const player = players[playerIndex];
+
+      // Support both old and new field names - ONLY use user's balances (not minion balances)
+      const currentUsd = player.usdBalance ?? player.usd ?? 0;
+      const currentCoins = player.coinBalance ?? player.coins ?? 0;
+
+      // If trying to sell more than available, sell all available user coins (not minion coins)
+      const actualAmount = Math.min(amount, currentCoins);
+      
+      if (actualAmount <= 0) {
+        return NextResponse.json({
+          success: false,
+          player,
+          coinPrice,
+          totalRevenue: 0,
+          reason: 'No coins to sell'
+        });
+      }
+
+      const totalRevenue = actualAmount * coinPrice;
+
+      // Update using new field names (and maintain old for backward compatibility)
+      // Prevent negative balances (use actualAmount, not amount) - ONLY update user's balances
+      player.coinBalance = Math.max(0, currentCoins - actualAmount);
+      player.usdBalance = Math.max(0, currentUsd + totalRevenue);
+      player.coins = player.coinBalance;
+      player.usd = player.usdBalance;
+      player.lastInteractionValue = actualAmount;
+      player.lastInteractionTime = new Date().toISOString();
+      player.lastInteractionV = actualAmount;
+      player.lastInteractionT = player.lastInteractionTime;
+
+      // Update players
+      await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));
+
+      // Track the interaction
+      // ⚠️ CRITICAL: Re-read interactions from Redis to avoid race condition with bot trades
+      const freshGameData = await redis.hget(`game:${gameId}`, 'interactions');
+      const interactions = JSON.parse(freshGameData || '[]');
+      const playerName = player.playerName || player.userName;
+      interactions.push({
+        name: playerName,  // Required for front-end
+        type: 'sell',      // Required for front-end
+        value: Math.round(actualAmount * 100),  // Amount in cents
+        timestamp: new Date().toISOString(),  // Add timestamp
+        interactionName: playerName,
+        interactionDescription: `${playerName} sold ${actualAmount} BC for $${totalRevenue.toFixed(2)}${actualAmount < amount ? ` (requested ${amount})` : ''}`
+      });
+      await redis.hset(`game:${gameId}`, 'interactions', JSON.stringify(interactions));
+
+      return NextResponse.json({ 
+        success: true, 
+        player,
+        coinPrice,  // Include price used for transparency
+        totalRevenue 
+      });
+    } catch (error) {
+      retryCount++;
+      if (retryCount >= maxRetries) {
+        console.error(`Error selling coins after ${maxRetries} retries:`, error);
+        return NextResponse.json(
+          { error: 'Failed to sell coins after multiple attempts' },
+          { status: 500 }
+        );
+      }
+      // Wait before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, 100 * retryCount));
+      console.warn(`Sell transaction failed, retrying (${retryCount}/${maxRetries}):`, error);
+      // Continue to retry
+    }
+  }
+  
+  return NextResponse.json(
+    { error: 'Failed to sell coins' },
+    { status: 500 }
+  );
 }
