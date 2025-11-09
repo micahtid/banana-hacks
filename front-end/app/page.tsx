@@ -88,11 +88,10 @@ export default function Home() {
           <h1 className="font-retro text-6xl text-[var(--primary-light)] mb-4">
             BANANA COIN
           </h1>
-          <p className="text-sm text-[var(--foreground)] max-w-lg mx-auto leading-relaxed">
+          <p className="text-lg text-[var(--foreground)] max-w-lg mx-auto leading-relaxed">
             Compete with friends in real-time trading! Create or join game rooms,
             trade virtual Banana Coins, deploy automated trading bots, and see who
-            can maximize their portfolio value before time runs out. Watch live price
-            movements, execute strategic trades, and climb to the top of the leaderboard!
+            can maximize their portfolio value before time runs out.
           </p>
         </div>
 
