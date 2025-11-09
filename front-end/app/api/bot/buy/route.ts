@@ -1,11 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { getRedisClient } from '@/utils/redis';
-import { v4 as uuidv4 } from 'uuid';
+
+const PYTHON_API_URL = process.env.PYTHON_API_URL || 'http://localhost:8000';
 
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { gameId, userId, botType, cost } = body;
+    const { gameId, userId, botType, cost, customPrompt } = body;
+
+    console.log('[Bot Buy] Request received:', { gameId, userId, botType, cost });
 
     if (!gameId || !userId || !botType || cost === undefined) {
       return NextResponse.json(
@@ -14,54 +16,76 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const redis = getRedisClient();
-    const gameExists = await redis.exists(`game:${gameId}`);
+    // Check if Python backend is reachable
+    console.log('[Bot Buy] Calling Python backend at:', `${PYTHON_API_URL}/api/bot/buy`);
 
-    if (!gameExists) {
+    let response;
+    try {
+      response = await fetch(`${PYTHON_API_URL}/api/bot/buy`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          gameId,
+          userId,
+          botType,
+          cost,
+          customPrompt,
+        }),
+      });
+    } catch (fetchError) {
+      console.error('[Bot Buy] Failed to connect to Python backend:', fetchError);
       return NextResponse.json(
-        { error: 'Game not found' },
-        { status: 404 }
+        { error: 'Cannot connect to Python backend. Is it running on port 8000?' },
+        { status: 503 }
       );
     }
 
-    const gameData = await redis.hgetall(`game:${gameId}`);
-    const players = JSON.parse(gameData.players || '[]');
+    console.log('[Bot Buy] Python backend response status:', response.status);
 
-    const playerIndex = players.findIndex((p: any) => p.userId === userId);
-    if (playerIndex === -1) {
+    if (!response.ok) {
+      let errorData;
+      let rawText;
+      try {
+        rawText = await response.text();
+        console.error('[Bot Buy] Raw response from Python:', rawText);
+        errorData = JSON.parse(rawText);
+      } catch (e) {
+        console.error('[Bot Buy] Could not parse Python response, raw text:', rawText);
+        errorData = { detail: rawText || 'Unknown error from Python backend' };
+      }
+      console.error('[Bot Buy] Parsed error data:', errorData);
       return NextResponse.json(
-        { error: 'Player not found in game' },
-        { status: 404 }
+        { error: errorData.detail || errorData.error || 'Failed to buy bot' },
+        { status: response.status }
       );
     }
 
-    const player = players[playerIndex];
-
-    if (player.usd < cost) {
-      return NextResponse.json(
-        { error: 'Insufficient funds' },
-        { status: 400 }
-      );
-    }
-
-    const newBot = {
-      id: uuidv4(),
-      type: botType,
-      active: false,
+    const data = await response.json();
+    console.log('[Bot Buy] Success, bot created:', data.botId);
+    
+    // Transform response to match front-end format
+    const bot = {
+      id: data.botId,
+      type: data.botType,
+      active: true,
       purchasedAt: Date.now(),
+      ...data.bot,
     };
 
-    player.usd -= cost;
-    player.bots = player.bots || [];
-    player.bots.push(newBot);
-
-    await redis.hset(`game:${gameId}`, 'players', JSON.stringify(players));
-
-    return NextResponse.json({ success: true, bot: newBot, player });
+    return NextResponse.json({ 
+      success: true, 
+      bot,
+      newUsd: data.newUsd
+    });
   } catch (error) {
-    console.error('Error buying bot:', error);
+    console.error('[Bot Buy] Unexpected error:', error);
     return NextResponse.json(
-      { error: 'Failed to buy bot' },
+      { 
+        error: 'Failed to buy bot', 
+        details: error instanceof Error ? error.message : String(error) 
+      },
       { status: 500 }
     );
   }

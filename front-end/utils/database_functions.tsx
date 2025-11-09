@@ -283,21 +283,100 @@ export const sellCoins = async (
  * Buy a bot
  */
 export const buyBot = async (
-  botPriceBC: number,
+  botPrice: number,
   userId: string,
   gameId: string,
-  botType: 'premade' | 'custom',
+  botType: string,
   customPrompt?: string
 ): Promise<void> => {
-  const response = await fetch('/api/bot/buy', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameId, userId, botType, cost: botPriceBC, customPrompt }),
+  // Validate parameters before sending
+  console.log('[buyBot] Parameters received:', {
+    botPrice,
+    userId,
+    gameId,
+    botType,
+    customPrompt: customPrompt ? '(provided)' : '(none)',
+    // Type checking
+    userIdType: typeof userId,
+    gameIdType: typeof gameId,
+    botTypeType: typeof botType
   });
 
-  if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to buy bot');
+  if (!userId || userId === 'undefined' || userId === 'null') {
+    console.error('[buyBot] Invalid userId:', userId);
+    throw new Error(`userId is required but was not provided (received: ${userId})`);
+  }
+
+  if (!gameId || gameId === 'undefined' || gameId === 'null') {
+    console.error('[buyBot] Invalid gameId:', gameId);
+    throw new Error(`gameId is required but was not provided (received: ${gameId})`);
+  }
+
+  if (!botType || botType === 'undefined' || botType === 'null') {
+    console.error('[buyBot] Invalid botType:', botType);
+    throw new Error(`botType is required but was not provided (received: ${botType})`);
+  }
+
+  if (botPrice === undefined || botPrice === null || botPrice <= 0) {
+    console.error('[buyBot] Invalid botPrice:', botPrice);
+    throw new Error(`Invalid botPrice: ${botPrice}`);
+  }
+
+  const requestBody = { 
+    gameId, 
+    userId, 
+    botType, 
+    cost: botPrice, 
+    customPrompt 
+  };
+
+  console.log('[buyBot] Sending request to /api/bot/buy:', requestBody);
+
+  try {
+    const response = await fetch('/api/bot/buy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(requestBody),
+    });
+
+    console.log('[buyBot] Response status:', response.status);
+
+    if (!response.ok) {
+      let errorData;
+      try {
+        errorData = await response.json();
+        console.error('[buyBot] Error response:', errorData);
+        console.error('[buyBot] Full error object:', JSON.stringify(errorData, null, 2));
+      } catch (e) {
+        console.error('[buyBot] Could not parse error response');
+        throw new Error(`Bot purchase failed with status ${response.status}`);
+      }
+      
+      // Handle Pydantic validation errors (FastAPI format)
+      if (errorData.detail) {
+        if (Array.isArray(errorData.detail)) {
+          // Pydantic validation error array
+          const errorMessages = errorData.detail.map((err: any) => {
+            const field = err.loc ? err.loc.join('.') : 'unknown';
+            const msg = err.msg || 'validation error';
+            return `${field}: ${msg}`;
+          }).join(', ');
+          throw new Error(`Validation error: ${errorMessages}`);
+        } else if (typeof errorData.detail === 'string') {
+          // Simple error message
+          throw new Error(errorData.detail);
+        }
+      }
+      
+      // Fallback to .error field (our custom format)
+      throw new Error(errorData.error || `Failed to buy bot (status ${response.status})`);
+    }
+
+    const result = await response.json();
+    console.log('[buyBot] Success:', result);
+  } catch (error) {
+    console.error('[buyBot] Exception:', error);
+    throw error;
   }
 };
 
@@ -309,14 +388,22 @@ export const toggleBot = async (
   userId: string,
   gameId: string
 ): Promise<void> => {
+  console.log('[toggleBot] Request:', { botId, userId, gameId });
+  
   const response = await fetch('/api/bot/toggle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ gameId, userId, botId }),
   });
 
+  console.log('[toggleBot] Response status:', response.status);
+
   if (!response.ok) {
     const error = await response.json();
+    console.error('[toggleBot] Error:', error);
     throw new Error(error.error || 'Failed to toggle bot');
   }
+
+  const result = await response.json();
+  console.log('[toggleBot] Success:', result);
 };

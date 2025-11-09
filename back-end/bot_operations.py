@@ -40,13 +40,16 @@ def buyBot(user_id: str, game_id: str, bot_type: str = 'random',
         user_index = -1
         
         for i, player in enumerate(players):
-            if player.get('userId') == user_id:
+            # Check both userId and playerId for compatibility
+            player_id = player.get('userId') or player.get('playerId')
+            if player_id == user_id:
                 user_found = True
                 user_index = i
                 break
         
         if not user_found:
             print(f"User {user_id} not found in game {game_id}")
+            print(f"Available players: {[p.get('userId') or p.get('playerId') for p in players]}")
             return None
         
         # Create new bot
@@ -56,7 +59,8 @@ def buyBot(user_id: str, game_id: str, bot_type: str = 'random',
             usd_given=initial_usd,
             usd=initial_usd,
             bc=0.0,
-            bot_type=bot_type
+            bot_type=bot_type,
+            user_id=user_id
         )
         
         bot_id = bot.bot_id

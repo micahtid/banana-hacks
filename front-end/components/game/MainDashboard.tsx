@@ -8,6 +8,7 @@ import {
   type User,
   buyCoins,
   sellCoins,
+  toggleBot,
 } from "@/utils/database_functions";
 import { useState, useEffect } from "react";
 import { useUser } from "@/providers/UserProvider";
@@ -45,6 +46,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [amount, setAmount] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
+  const [togglingBot, setTogglingBot] = useState<string | null>(null);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
@@ -128,6 +130,31 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       console.error("Failed to sell coins:", error);
     } finally {
       setActionLoading(null);
+    }
+  };
+
+  const handleToggleBot = async (botId: string) => {
+    if (!user) return;
+    
+    console.log('[MainDashboard] Toggling bot:', {
+      botId,
+      userId: currentUser.userId,
+      gameId: game.gameId
+    });
+    
+    setTogglingBot(botId);
+    try {
+      await toggleBot(botId, currentUser.userId, game.gameId ?? "");
+      console.log('[MainDashboard] ✓ Bot toggled successfully');
+      
+      // Force refresh by waiting a moment for Redis to update
+      setTimeout(() => {
+        console.log('[MainDashboard] State should refresh from polling');
+      }, 100);
+    } catch (error) {
+      console.error("[MainDashboard] ❌ Failed to toggle bot:", error);
+    } finally {
+      setTogglingBot(null);
     }
   };
 
@@ -366,36 +393,69 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
               </div>
             ) : (
               <div className="space-y-3">
-                {bots.map((bot: any) => (
-                  <div
-                    key={bot.botId ?? Math.random()}
-                    className="p-3 border-2 border-[var(--border)] bg-[var(--background)] hover:border-[var(--primary)] transition-colors"
-                  >
-                    <div className="font-retro text-lg text-[var(--primary-light)] mb-2">
-                      {bot.botName ?? "Unnamed Bot"}
+                {bots.map((bot: any) => {
+                  const isActive = bot.isActive ?? false;
+                  const botId = bot.botId ?? '';
+                  const usdBalance = typeof bot.usdBalance === 'number' ? bot.usdBalance : 0;
+                  const coinBalance = typeof bot.coinBalance === 'number' ? bot.coinBalance : 0;
+                  const startingBalance = typeof bot.startingUsdBalance === 'number' ? bot.startingUsdBalance : 0;
+                  const performance = startingBalance > 0 ? ((usdBalance + coinBalance * currentPrice - startingBalance) / startingBalance * 100) : 0;
+                  
+                  return (
+                    <div
+                      key={botId || Math.random()}
+                      className={`p-3 border-2 transition-colors ${
+                        isActive 
+                          ? 'border-[var(--success)] bg-[var(--background)]' 
+                          : 'border-[var(--border)] bg-[var(--background)] opacity-70'
+                      }`}
+                    >
+                      <div className="flex items-center justify-between mb-2">
+                        <div className="font-retro text-lg text-[var(--primary-light)]">
+                          {bot.botName ?? "Bot"}
+                        </div>
+                        <Button
+                          onClick={() => handleToggleBot(botId)}
+                          variant={isActive ? "danger" : "success"}
+                          size="sm"
+                          disabled={togglingBot !== null}
+                        >
+                          {togglingBot === botId 
+                            ? "..." 
+                            : isActive 
+                            ? "Stop" 
+                            : "Start"}
+                        </Button>
+                      </div>
+                      <div className="text-xs text-[var(--foreground)] space-y-1">
+                        <div className="flex justify-between">
+                          <span>Status:</span>
+                          <span className={isActive ? "text-[var(--success)]" : "text-[var(--foreground)]"}>
+                            {isActive ? "Active" : "Stopped"}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>USD Balance:</span>
+                          <span className="text-[var(--success)]">
+                            ${usdBalance.toFixed(2)}
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>BC Balance:</span>
+                          <span className="text-[var(--primary)]">
+                            {coinBalance.toFixed(2)} BC
+                          </span>
+                        </div>
+                        <div className="flex justify-between">
+                          <span>Performance:</span>
+                          <span className={performance >= 0 ? "text-[var(--success)]" : "text-[var(--danger)]"}>
+                            {performance >= 0 ? '+' : ''}{performance.toFixed(1)}%
+                          </span>
+                        </div>
+                      </div>
                     </div>
-                    <div className="text-sm text-[var(--foreground)]">
-                      <div className="flex justify-between">
-                        <span>Trades:</span>
-                        <span className="text-[var(--accent)]">
-                          {Math.floor(Math.random() * 50) + 10}
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>Performance:</span>
-                        <span className="text-[var(--success)]">
-                          +{(Math.random() * 20 + 5).toFixed(1)}%
-                        </span>
-                      </div>
-                      <div className="flex justify-between">
-                        <span>BC Earned:</span>
-                        <span className="text-[var(--primary)]">
-                          {(Math.random() * 100 + 20).toFixed(2)} BC
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </Card>

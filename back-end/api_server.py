@@ -16,7 +16,8 @@ from datetime import datetime
 from market import Market, MarketData
 from user import User
 from wallet import UserWallet
-# from bot import BotManager
+from bot import Bot
+from bot_operations import buyBot, toggleBot
 from redis_helper import get_redis_connection
 
 # Configure logging
@@ -70,6 +71,13 @@ class BotToggleRequest(BaseModel):
     gameId: str
     userId: str
     botId: str
+
+class BotBuyRequest(BaseModel):
+    gameId: str
+    userId: str
+    botType: str = Field(..., description="Type of bot strategy")
+    cost: float = Field(..., gt=0, description="Cost in USD")
+    customPrompt: Optional[str] = None
 
 # ============================================================================
 # BACKGROUND TASK: MARKET UPDATES
@@ -474,6 +482,207 @@ async def sell_coins(request: TradeRequest):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+@app.post("/api/bot/buy")
+async def buy_bot(request: BotBuyRequest):
+    """
+    Purchase a bot for a user.
+    """
+    try:
+        # Get user wallet from Redis
+        r = get_redis_connection()
+        game_data = r.hgetall(f"game:{request.gameId}")
+        
+        if not game_data:
+            raise HTTPException(status_code=404, detail="Game not found")
+        
+        import json
+        players = json.loads(game_data.get('players', '[]'))
+        
+        # Find the user (handle both userId and playerId fields)
+        user_data = None
+        user_index = None
+        for i, player in enumerate(players):
+            # Check both userId and playerId fields for compatibility
+            player_id = player.get('userId') or player.get('playerId')
+            if player_id == request.userId:
+                user_data = player
+                user_index = i
+                break
+        
+        if not user_data:
+            raise HTTPException(status_code=404, detail="User not found in game")
+        
+        # Check if user has enough USD (handle both usd and usdBalance fields)
+        user_usd = user_data.get('usd', user_data.get('usdBalance', 0))
+        if user_usd < request.cost:
+            raise HTTPException(status_code=400, detail="Insufficient USD")
+        
+        # Map front-end bot types to backend bot types
+        bot_type_map = {
+            'premade': 'random',
+            'custom': 'random',
+            'hodler': 'mean_reversion',
+            'scalper': 'momentum',
+            'swing': 'momentum',
+            'arbitrage': 'market_maker',
+            'dip': 'mean_reversion',
+            'momentum': 'momentum'
+        }
+        
+        backend_bot_type = bot_type_map.get(request.botType, 'random')
+        
+        # Deduct cost from user FIRST (before bot creation)
+        if 'usd' in user_data:
+            user_data['usd'] -= request.cost
+        if 'usdBalance' in user_data:
+            user_data['usdBalance'] -= request.cost
+        
+        # Add bot entry to user's bots list
+        if 'bots' not in user_data:
+            user_data['bots'] = []
+        
+        # Generate temporary bot ID for the entry
+        import uuid
+        bot_id = str(uuid.uuid4())
+        
+        user_data['bots'].append({
+            'botId': bot_id,
+            'botName': backend_bot_type
+        })
+        
+        logger.info(f"After adding bot, user has {len(user_data['bots'])} bots: {user_data['bots']}")
+        logger.info(f"User index: {user_index}, Total players: {len(players)}")
+        
+        # Update players in Redis FIRST
+        players[user_index] = user_data
+        players_json = json.dumps(players)
+        logger.info(f"About to save. players[{user_index}]['bots'] = {players[user_index].get('bots', [])}")
+        logger.info(f"Full players array: {players}")
+        r.hset(f"game:{request.gameId}", "players", players_json)
+        
+        # Verify the save worked
+        saved_data = r.hget(f"game:{request.gameId}", "players")
+        saved_players = json.loads(saved_data) if saved_data else []
+        logger.info(f"After save, Redis has {len(saved_players[0].get('bots', []))} bots for player 0")
+        
+        # NOW create the actual bot (this will use the bot_id we generated)
+        # Call bot_operations directly but pass the bot_id we already created
+        from bot import Bot
+        bot = Bot(
+            bot_id=bot_id,
+            is_toggled=True,
+            usd_given=request.cost * 0.2,
+            usd=request.cost * 0.2,
+            bc=0.0,
+            bot_type=backend_bot_type,
+            user_id=request.userId
+        )
+        
+        # Save bot to Redis
+        bot.save_to_redis(request.gameId)
+        
+        # Start bot running in a separate thread
+        import threading
+        bot_thread = threading.Thread(
+            target=bot.run,
+            args=(request.gameId,),
+            daemon=True,
+            name=f"Bot-{bot_id}"
+        )
+        bot_thread.start()
+        
+        logger.info(f"Bot {bot_id} started for user {request.userId}")
+        
+        logger.info(f"User {request.userId} purchased bot {bot_id} for ${request.cost}")
+        
+        # Get bot details
+        bot = Bot.load_from_redis(request.gameId, bot_id)
+        bot_data = bot.to_dict() if bot else {}
+        
+        return {
+            "success": True,
+            "botId": bot_id,
+            "botType": backend_bot_type,
+            "cost": request.cost,
+            "newUsd": user_data.get('usd', user_data.get('usdBalance', 0)),
+            "bot": bot_data
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error buying bot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/bot/toggle")
+async def toggle_bot(request: BotToggleRequest):
+    """
+    Toggle a bot on/off.
+    """
+    try:
+        success = await asyncio.to_thread(
+            toggleBot,
+            request.botId,
+            request.gameId
+        )
+        
+        if not success:
+            raise HTTPException(status_code=404, detail="Bot not found")
+        
+        # Get bot details
+        bot = Bot.load_from_redis(request.gameId, request.botId)
+        if not bot:
+            raise HTTPException(status_code=404, detail="Bot not found after toggle")
+        
+        logger.info(f"Bot {request.botId} toggled to {'ON' if bot.is_toggled else 'OFF'}")
+        
+        return {
+            "success": True,
+            "botId": request.botId,
+            "isActive": bot.is_toggled,
+            "bot": bot.to_dict()
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling bot: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.get("/api/bot/list/{game_id}/{user_id}")
+async def list_user_bots(game_id: str, user_id: str):
+    """
+    List all bots owned by a user in a game.
+    """
+    try:
+        r = get_redis_connection()
+        
+        # Get all bots for the game
+        bots_set_key = f"bots:{game_id}"
+        bot_ids = r.smembers(bots_set_key)
+        
+        # Load user's bots
+        user_bots = []
+        for bot_id_bytes in bot_ids:
+            bot_id = bot_id_bytes.decode('utf-8') if isinstance(bot_id_bytes, bytes) else bot_id_bytes
+            bot = Bot.load_from_redis(game_id, bot_id)
+            if bot:
+                user_bots.append(bot.to_dict())
+        
+        return {
+            "success": True,
+            "gameId": game_id,
+            "userId": user_id,
+            "bots": user_bots
+        }
+        
+    except Exception as e:
+        logger.error(f"Error listing bots: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
 @app.get("/health")
 async def health_check():
     """
@@ -503,6 +712,9 @@ async def root():
             "GET /api/game/market-data/{game_id}": "Get market data and price history",
             "POST /api/game/buy-coins": "Execute buy trade",
             "POST /api/game/sell-coins": "Execute sell trade",
+            "POST /api/bot/buy": "Purchase a bot",
+            "POST /api/bot/toggle": "Toggle bot on/off",
+            "GET /api/bot/list/{game_id}/{user_id}": "List user's bots",
             "GET /health": "Health check"
         }
     }

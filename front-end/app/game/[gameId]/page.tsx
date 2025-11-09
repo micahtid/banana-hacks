@@ -65,14 +65,40 @@ export default function GamePage() {
   }
 
   // Check if user is in the game
-  const currentUser = game.users.find((u) => u.userId === user.uid);
+  // Use players (primary) or users (backward compatibility)
+  const playersList = game.players || game.users || [];
+  
+  console.log('[Game Page] Debug:', {
+    firebaseUid: user.uid,
+    playersCount: playersList.length,
+    players: playersList.map(p => ({ 
+      userId: p.userId, 
+      playerId: (p as any).playerId,
+      userName: p.userName || (p as any).playerName 
+    }))
+  });
+
+  // Try to find user by userId (should match Firebase UID)
+  const currentUser = playersList.find((u) => u.userId === user.uid);
+  
   if (!currentUser) {
+    console.error('[Game Page] Current user not found in game', {
+      firebaseUid: user.uid,
+      availableUserIds: playersList.map(p => p.userId)
+    });
+    
     return (
       <div className="flex min-h-screen items-center justify-center p-8">
         <Card className="max-w-md">
           <div className="text-center">
             <p className="font-retro text-2xl text-[var(--danger)] mb-4">
               You are not in this game
+            </p>
+            <p className="text-sm text-[var(--foreground)] mb-4">
+              Debug: Your ID: {user.uid}
+            </p>
+            <p className="text-sm text-[var(--foreground)] mb-4">
+              Players in game: {playersList.length}
             </p>
             <Button onClick={() => router.push("/")} variant="primary">
               Return Home
@@ -82,6 +108,13 @@ export default function GamePage() {
       </div>
     );
   }
+
+  console.log('[Game Page] Current user found:', {
+    userId: currentUser.userId,
+    userName: currentUser.userName,
+    usd: currentUser.usd,
+    coins: currentUser.coins
+  });
 
   return (
     <div className="min-h-screen">

@@ -4,7 +4,7 @@ import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
 import { type Game, type User, buyBot } from "@/utils/database_functions";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useUser } from "@/providers/UserProvider";
 
 interface ShopsProps {
@@ -25,94 +25,150 @@ const PREMADE_BOTS: PremadeBot[] = [
     id: "hodler",
     name: "HODL Master",
     description: "A patient bot that buys and holds for long-term gains",
-    price: 50,
+    price: 500,
     strategy: "Buy low, hold forever",
   },
   {
     id: "scalper",
     name: "Quick Scalper",
     description: "Makes rapid small trades to capture quick profits",
-    price: 75,
+    price: 750,
     strategy: "Fast trades, small margins",
   },
   {
     id: "swing",
     name: "Swing Trader",
     description: "Identifies trends and trades on momentum swings",
-    price: 100,
+    price: 1000,
     strategy: "Trend following",
   },
   {
     id: "arbitrage",
     name: "Arbitrage Pro",
     description: "Exploits price differences for guaranteed profits",
-    price: 150,
+    price: 1500,
     strategy: "Risk-free arbitrage",
   },
   {
     id: "dip",
     name: "Dip Buyer",
     description: "Automatically buys during market dips",
-    price: 60,
+    price: 600,
     strategy: "Buy the dip",
   },
   {
     id: "momentum",
     name: "Momentum Chaser",
     description: "Rides strong upward momentum for maximum gains",
-    price: 80,
+    price: 800,
     strategy: "Follow the momentum",
   },
 ];
 
-const CUSTOM_BOT_PRICE = 175; // More expensive than all premade bots
+const CUSTOM_BOT_PRICE = 1750; // More expensive than all premade bots
 
 export default function Shops({ game, currentUser }: ShopsProps) {
   const { user } = useUser();
   const [customPrompt, setCustomPrompt] = useState("");
   const [buyingBot, setBuyingBot] = useState<string | null>(null);
 
+  // Debug: Log currentUser when component mounts
+  useEffect(() => {
+    console.log('[Shops] Component mounted with currentUser:', {
+      currentUser,
+      hasUserId: 'userId' in currentUser,
+      userId: currentUser.userId,
+      userIdType: typeof currentUser.userId,
+      userName: currentUser.userName,
+      usd: currentUser.usd,
+      allKeys: Object.keys(currentUser)
+    });
+    console.log('[Shops] Game:', {
+      gameId: game.gameId,
+      hasGameId: 'gameId' in game,
+      gameIdType: typeof game.gameId
+    });
+  }, [currentUser, game]);
+
   const handleBuyPremade = async (bot: PremadeBot) => {
-    if (!user || currentUser.coins < bot.price) {
-      alert(`Insufficient Banana Coins! You need ${bot.price} BC.`);
+    if (!user) {
+      console.error('[Shops] User not logged in');
+      return;
+    }
+
+    if (!currentUser.userId) {
+      console.error('[Shops] User ID not available');
+      return;
+    }
+
+    if (!game.gameId) {
+      console.error('[Shops] Game ID not available');
+      return;
+    }
+
+    if (currentUser.usd < bot.price) {
+      console.warn(`[Shops] Insufficient USD: has $${currentUser.usd}, needs $${bot.price}`);
       return;
     }
 
     setBuyingBot(bot.id);
     try {
-      // TO UPDATE: This will call backend buyBot(botPriceBC, userId, gameId, botType, customPrompt)
-      await buyBot(bot.price, user.uid, game.gameId, "premade", bot.name);
-      alert(`Successfully purchased ${bot.name}!`);
+      console.log('[Shops] Purchasing bot:', { 
+        botPrice: bot.price, 
+        userId: currentUser.userId, 
+        gameId: game.gameId, 
+        botType: bot.id 
+      });
+      
+      await buyBot(bot.price, currentUser.userId, game.gameId, bot.id, bot.name);
+      console.log(`[Shops] ✅ Successfully purchased ${bot.name}!`);
     } catch (error) {
-      console.error("Failed to buy bot:", error);
-      alert("Failed to purchase bot. Please try again.");
+      console.error("[Shops] ❌ Failed to buy bot:", error);
     } finally {
       setBuyingBot(null);
     }
   };
 
   const handleBuyCustom = async () => {
-    if (!user) return;
+    if (!user) {
+      console.error('[Shops] User not logged in');
+      return;
+    }
 
-    if (currentUser.coins < CUSTOM_BOT_PRICE) {
-      alert(`Insufficient Banana Coins! You need ${CUSTOM_BOT_PRICE} BC.`);
+    if (!currentUser.userId) {
+      console.error('[Shops] User ID not available');
+      return;
+    }
+
+    if (!game.gameId) {
+      console.error('[Shops] Game ID not available');
+      return;
+    }
+
+    if (currentUser.usd < CUSTOM_BOT_PRICE) {
+      console.warn(`[Shops] Insufficient USD: has $${currentUser.usd}, needs $${CUSTOM_BOT_PRICE}`);
       return;
     }
 
     if (!customPrompt.trim()) {
-      alert("Please enter a prompt for your custom bot");
+      console.warn("[Shops] Custom bot prompt is empty");
       return;
     }
 
     setBuyingBot("custom");
     try {
-      // TO UPDATE: This will call backend buyBot(botPriceBC, userId, gameId, botType, customPrompt)
-      await buyBot(CUSTOM_BOT_PRICE, user.uid, game.gameId, "custom", customPrompt);
+      console.log('[Shops] Creating custom bot:', { 
+        botPrice: CUSTOM_BOT_PRICE, 
+        userId: currentUser.userId, 
+        gameId: game.gameId, 
+        customPrompt 
+      });
+      
+      await buyBot(CUSTOM_BOT_PRICE, currentUser.userId, game.gameId, "custom", customPrompt);
       setCustomPrompt("");
-      alert("Successfully created your custom bot!");
+      console.log("[Shops] ✅ Successfully created custom bot!");
     } catch (error) {
-      console.error("Failed to buy custom bot:", error);
-      alert("Failed to create custom bot. Please try again.");
+      console.error("[Shops] ❌ Failed to buy custom bot:", error);
     } finally {
       setBuyingBot(null);
     }
@@ -127,8 +183,8 @@ export default function Shops({ game, currentUser }: ShopsProps) {
         </h2>
         <div className="text-right">
           <div className="text-sm text-[var(--foreground)]">Your Balance</div>
-          <div className="font-retro text-3xl text-[var(--primary)]">
-            {currentUser.coins.toFixed(2)} BC
+          <div className="font-retro text-3xl text-[var(--success)]">
+            ${currentUser.usd.toFixed(2)} USD
           </div>
         </div>
       </div>
@@ -140,7 +196,7 @@ export default function Shops({ game, currentUser }: ShopsProps) {
           <div
             className={`
               p-5 border-2 transition-all
-              ${currentUser.coins >= CUSTOM_BOT_PRICE ? "border-[var(--border)] hover:border-[var(--primary)]" : "border-[var(--border)] opacity-60"}
+              ${currentUser.usd >= CUSTOM_BOT_PRICE ? "border-[var(--border)] hover:border-[var(--primary)]" : "border-[var(--border)] opacity-60"}
               bg-[var(--background)]
             `}
           >
@@ -174,19 +230,19 @@ export default function Shops({ game, currentUser }: ShopsProps) {
             <div className="flex items-center justify-between gap-3">
               <div>
                 <div className="text-xs text-[var(--foreground)]">Price</div>
-                <div className="font-retro text-xl text-[var(--primary)]">
-                  {CUSTOM_BOT_PRICE} BC
+                <div className="font-retro text-xl text-[var(--success)]">
+                  ${CUSTOM_BOT_PRICE} USD
                 </div>
               </div>
               <Button
                 onClick={handleBuyCustom}
-                variant={currentUser.coins >= CUSTOM_BOT_PRICE ? "primary" : "secondary"}
+                variant={currentUser.usd >= CUSTOM_BOT_PRICE ? "primary" : "secondary"}
                 size="sm"
-                disabled={buyingBot !== null || currentUser.coins < CUSTOM_BOT_PRICE || !customPrompt.trim()}
+                disabled={buyingBot !== null || currentUser.usd < CUSTOM_BOT_PRICE || !customPrompt.trim()}
               >
                 {buyingBot === "custom"
                   ? "Creating..."
-                  : currentUser.coins < CUSTOM_BOT_PRICE
+                  : currentUser.usd < CUSTOM_BOT_PRICE
                   ? "Can't Afford"
                   : "Create"}
               </Button>
@@ -199,7 +255,7 @@ export default function Shops({ game, currentUser }: ShopsProps) {
       <Card title="PREBUILT BOTS" padding="lg">
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {PREMADE_BOTS.map((bot) => {
-            const canAfford = currentUser.coins >= bot.price;
+            const canAfford = currentUser.usd >= bot.price;
             const isOwned = currentUser.bots.some((b) => b.botName === bot.name);
 
             return (
@@ -242,8 +298,8 @@ export default function Shops({ game, currentUser }: ShopsProps) {
                 <div className="flex items-center justify-between gap-3">
                   <div>
                     <div className="text-xs text-[var(--foreground)]">Price</div>
-                    <div className="font-retro text-xl text-[var(--primary)]">
-                      {bot.price} BC
+                    <div className="font-retro text-xl text-[var(--success)]">
+                      ${bot.price} USD
                     </div>
                   </div>
                   <Button
