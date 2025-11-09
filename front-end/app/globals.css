@@ -65,12 +65,13 @@ body {
 }
 
 /* Scrolling text animation for news carousel */
+/* Uses seamless infinite scroll by duplicating content and moving by exactly one copy */
 @keyframes scroll {
   0% {
     transform: translateX(0);
   }
   100% {
-    transform: translateX(-33.333%);
+    transform: translateX(-50%);
   }
 }
 
@@ -87,8 +88,24 @@ body {
     transform: translateX(0);
   }
   100% {
-    transform: translateX(-20%);
+    transform: translateX(-50%);
   }
+}
+
+/* Flashing red border animation for event alerts */
+@keyframes flash-red {
+  0%, 100% {
+    border-color: var(--danger);
+    box-shadow: 0 0 0 0 rgba(239, 68, 68, 0.7);
+  }
+  50% {
+    border-color: var(--danger);
+    box-shadow: 0 0 10px 3px rgba(239, 68, 68, 0.9);
+  }
+}
+
+.animate-flash-red {
+  animation: flash-red 1s ease-in-out infinite;
 }
 
 /* ============================================
@@ -102,7 +119,7 @@ body {
   background-color: rgba(0, 0, 0, 0.2);
   display: flex;
   align-items: center;
-  justify-center;
+  justify-content: center;
   z-index: 50;
   padding: 2rem;
 }
@@ -154,15 +171,18 @@ body {
   width: 100%;
   display: flex;
   align-items: center;
+  /* Prevent layout shifts that could break animation */
+  min-height: 3rem;
 }
 
 .news-banner-text {
   font-family: var(--font-vt323), monospace;
   font-size: 1.875rem;
   white-space: nowrap;
-  display: flex;
+  display: inline-flex;
   align-items: center;
   gap: 0.5rem;
+  will-change: transform;
 }
 
 .news-banner-text.active {
@@ -178,7 +198,7 @@ body {
 .balance-card {
   padding: 0.75rem;
   border: 2px solid var(--border);
-  transition: colors 0.5s;
+  transition: color 0.5s;
 }
 
 .balance-label {
@@ -189,7 +209,7 @@ body {
 .balance-value {
   font-family: var(--font-vt323), monospace;
   font-size: 1.5rem;
-  transition: colors 0.5s;
+  transition: color 0.5s;
 }
 
 /* Transaction item */
@@ -208,7 +228,7 @@ body {
 .minion-card {
   padding: 0.75rem;
   border: 2px solid;
-  transition: colors 0.3s;
+  transition: color 0.3s;
 }
 
 .minion-card.active {

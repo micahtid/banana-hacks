@@ -39,7 +39,7 @@ export async function GET(
 
     // Use pipeline to fetch all bots at once
     const pipeline = redis.pipeline();
-    allBotIds.forEach(botKey => {
+    allBotIds.forEach((botKey: string) => {
       pipeline.hgetall(botKey);
     });
     const botResults = allBotIds.length > 0 ? await pipeline.exec() : [];

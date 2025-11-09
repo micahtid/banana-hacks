@@ -66,20 +66,20 @@ function EndGameScreen({ game, currentUser }: GameDashboardProps) {
         </div>
 
         {currentUserEntry && (
-          <Card className="mb-6 bg-[var(--primary-light)] border-2 border-[var(--primary)]">
+          <Card className="mb-6 bg-[var(--card-bg)] border-2 border-[var(--border)]">
             <div className="text-center py-4">
               <div className="font-retro text-3xl text-[var(--primary-dark)] mb-2">
                 YOUR FINAL RANK
               </div>
               <div className="flex items-center justify-center gap-4 mb-4">
-                {currentUserRank === 1 && <FaTrophy className="text-6xl text-yellow-400" />}
-                {currentUserRank === 2 && <FaMedal className="text-6xl text-gray-400" />}
-                {currentUserRank === 3 && <FaAward className="text-6xl text-amber-600" />}
+                {currentUserRank === 1 && <FaTrophy className="text-6xl text-yellow-300" />}
+                {currentUserRank === 2 && <FaMedal className="text-6xl text-gray-300" />}
+                {currentUserRank === 3 && <FaAward className="text-6xl text-amber-400" />}
                 <div className="font-retro text-7xl text-[var(--primary-dark)]">
                   #{currentUserRank}
                 </div>
               </div>
-              <div className="font-retro text-4xl text-[var(--success)] mb-2">
+              <div className="font-retro text-4xl text-[var(--primary-dark)] mb-2">
                 ${currentUserEntry.wealth.toFixed(2)}
               </div>
               <div className="text-lg text-[var(--primary-dark)]">
@@ -107,14 +107,14 @@ function EndGameScreen({ game, currentUser }: GameDashboardProps) {
                   <div
                     key={entry.userId}
                     className={`py-5 px-4 border-b border-[var(--border)] flex items-center justify-between ${
-                      isCurrentUser ? "bg-[var(--primary-light)]" : ""
+                      isCurrentUser ? "bg-[var(--card-bg)]" : ""
                     }`}
                   >
                     <div className="flex items-center gap-4">
                       <div className="min-w-[3rem] flex items-center justify-center">
-                        {index === 0 && <FaTrophy className="text-3xl text-yellow-400" />}
-                        {index === 1 && <FaMedal className="text-3xl text-gray-400" />}
-                        {index === 2 && <FaAward className="text-3xl text-amber-600" />}
+                        {index === 0 && <FaTrophy className="text-3xl text-yellow-300" />}
+                        {index === 1 && <FaMedal className="text-3xl text-gray-300" />}
+                        {index === 2 && <FaAward className="text-3xl text-amber-400" />}
                       </div>
                       <div>
                         <div className="font-retro text-xl text-[var(--primary-dark)]">
@@ -126,7 +126,7 @@ function EndGameScreen({ game, currentUser }: GameDashboardProps) {
                         </div>
                       </div>
                     </div>
-                    <div className="font-retro text-2xl text-[var(--success)]">
+                    <div className="font-retro text-2xl text-[var(--primary-dark)]">
                       ${entry.wealth.toFixed(2)}
                     </div>
                   </div>
@@ -196,6 +196,7 @@ export default function GameDashboard({
 
       if (
         typeof game.startTime === "object" &&
+        game.startTime !== null &&
         "seconds" in game.startTime &&
         typeof (game.startTime as any).seconds === "number"
       ) {
@@ -203,7 +204,7 @@ export default function GameDashboard({
       } else if (game.startTime instanceof Date) {
         startTime = game.startTime;
       } else {
-        startTime = new Date(game.startTime as string);
+        startTime = new Date(game.startTime as any);
       }
 
       const durationMinutes = typeof game.gameDuration === "number" ? game.gameDuration : game.durationMinutes || 0;
@@ -282,15 +283,17 @@ export default function GameDashboard({
       {/* Main Content Area */}
       <main className="flex-1 overflow-hidden">
         {activeTab === "dashboard" && (
-          <MainDashboard game={game} currentUser={currentUser} />
+          <div className="h-full overflow-hidden px-8 pt-6">
+            <MainDashboard game={game} currentUser={currentUser} />
+          </div>
         )}
         {activeTab === "shops" && (
-          <div className="h-full overflow-y-auto p-8">
+          <div className="h-full overflow-y-auto px-8 pt-6">
             <Shops game={game} currentUser={currentUser} />
           </div>
         )}
         {activeTab === "transactions" && (
-          <div className="h-full overflow-y-auto p-8">
+          <div className="h-full overflow-y-auto px-8 pt-6">
             <Transactions game={game} currentUser={currentUser} />
           </div>
         )}
