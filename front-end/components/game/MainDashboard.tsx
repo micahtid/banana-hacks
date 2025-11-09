@@ -27,6 +27,7 @@ import {
   Filler,
 } from "chart.js";
 import { FaTrophy, FaMedal, FaAward } from "react-icons/fa";
+import { TbAlertTriangle } from "react-icons/tb";
 
 ChartJS.register(
   CategoryScale,
@@ -518,11 +519,12 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           >
             <div className="overflow-hidden relative w-full flex items-center">
               <div
-                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast ${
+                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast flex items-center gap-2 ${
                   isEventActive ? 'text-white font-bold' : 'text-gray-700'
                 }`}
               >
-                {isEventActive && '🚨 '}{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •&nbsp;
+                {isEventActive && <TbAlertTriangle className="text-4xl" />}
+                <span>{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •</span>
               </div>
             </div>
           </div>
