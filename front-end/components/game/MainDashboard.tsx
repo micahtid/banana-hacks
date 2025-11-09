@@ -70,12 +70,33 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [rotMultiplier, setRotMultiplier] = useState<number>(1.0);
   const [rotLevel, setRotLevel] = useState<number>(0);
+  const [newsText, setNewsText] = useState<string>("NO NEWS");
+  const [isEventActive, setIsEventActive] = useState<boolean>(false);
+  const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
   const interactionsArr = Array.isArray(game.interactions)
     ? game.interactions
     : [];
+
+  // --- Event News Banner Logic ---
+  useEffect(() => {
+    if (game.eventTriggered && !previousEventTriggered) {
+      // Event just triggered!
+      setPreviousEventTriggered(true);
+      setNewsText(game.eventTitle || "MARKET EVENT");
+      setIsEventActive(true);
+
+      // Return to "NO NEWS" after 30 seconds
+      const timer = setTimeout(() => {
+        setNewsText("NO NEWS");
+        setIsEventActive(false);
+      }, 30000);
+
+      return () => clearTimeout(timer);
+    }
+  }, [game.eventTriggered, previousEventTriggered, game.eventTitle]);
 
   // Calculate current user's total trades (their own + their bots' trades)
   const currentUserName = currentUser.userName || currentUser.playerName;
@@ -490,6 +511,21 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
           MAIN DASHBOARD
         </h2>
         <div className="flex items-center gap-3">
+          {/* News Carousel Banner */}
+          <div
+            className="px-8 py-2 overflow-hidden relative flex items-center"
+            style={{ width: '600px' }}
+          >
+            <div className="overflow-hidden relative w-full flex items-center">
+              <div
+                className={`font-retro text-3xl whitespace-nowrap animate-scroll-fast ${
+                  isEventActive ? 'text-white font-bold' : 'text-gray-700'
+                }`}
+              >
+                {isEventActive && '🚨 '}{newsText} • {newsText} • {newsText} • {newsText} • {newsText} •&nbsp;
+              </div>
+            </div>
+          </div>
           <div className="px-6 py-3 border-2 border-[var(--border)] bg-[var(--card-bg)]">
             <div className="text-sm text-[var(--primary)] mb-1">TIME REMAINING</div>
             <div className="font-retro text-3xl text-[var(--primary-dark)] text-center">
