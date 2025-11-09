@@ -32,8 +32,28 @@ export async function GET(
     const coinHistory = JSON.parse(gameData.coinHistory || '[1.0]');
     const interactions = JSON.parse(gameData.interactions || '[]');
 
+    // Batch fetch all bot data in one go for better performance
+    const allBotIds = players.flatMap((player: any) =>
+      (player.bots || []).map((bot: any) => `bot:${gameId}:${bot.botId}`)
+    );
+
+    // Use pipeline to fetch all bots at once
+    const pipeline = redis.pipeline();
+    allBotIds.forEach(botKey => {
+      pipeline.hgetall(botKey);
+    });
+    const botResults = allBotIds.length > 0 ? await pipeline.exec() : [];
+
+    // Create a map of bot data for quick lookup
+    const botDataMap = new Map();
+    botResults?.forEach((result, index) => {
+      if (result && result[1]) {
+        botDataMap.set(allBotIds[index], result[1]);
+      }
+    });
+
     // Transform players to match both new and old interface (convert ISO string to Date)
-    const transformedPlayers = await Promise.all(players.map(async (player: any) => {
+    const transformedPlayers = players.map((player: any) => {
       // Support both old and new field names
       const playerId = player.playerId || player.userId;
       const playerName = player.playerName || player.userName;
@@ -42,68 +62,46 @@ export async function GET(
       const lastInteractionValue = player.lastInteractionValue ?? player.lastInteractionV ?? 0;
       const lastInteractionTime = player.lastInteractionTime || player.lastInteractionT;
 
-      // Fetch full bot details for each bot
+      // Process bot details using cached data
       const playerBots = player.bots || [];
-      console.log(`[API Game] Player ${playerId} has ${playerBots.length} bot(s) in list:`, 
-                  playerBots.map((b: any) => ({ botId: b.botId, botName: b.botName })));
-      
-      const fullBotDetails = await Promise.all(playerBots.map(async (bot: any) => {
-        try {
-          const botKey = `bot:${gameId}:${bot.botId}`;
-          const botExists = await redis.exists(botKey);
-          
-          if (!botExists) {
-            // Bot not found in Redis, return minimal info
-            console.warn(`[API Game] ⚠ Bot ${bot.botId} not found in Redis at key: ${botKey}`);
-            return {
-              botId: bot.botId,
-              botName: bot.botName || 'Bot',
-              isActive: bot.isActive ?? false,
-              usdBalance: 0,
-              coinBalance: 0,
-              startingUsdBalance: 0,
-            };
-          }
 
-          const botData = await redis.hgetall(botKey);
-          
-          // Safely parse numeric values with fallback to 0
-          const parseFloatSafe = (value: any): number => {
-            if (value === null || value === undefined) return 0;
-            const parsed = parseFloat(String(value));
-            return isNaN(parsed) ? 0 : parsed;
-          };
-          
-          // Parse isActive - Redis stores Python booleans as "True" or "False" strings
-          const rawIsToggled = botData.is_toggled;
-          const isActive = rawIsToggled === 'True' || rawIsToggled === 'true' || rawIsToggled === '1';
-          
-          const fullDetails = {
-            botId: bot.botId,
-            botName: bot.botName || botData.bot_type || 'Bot',
-            isActive,
-            usdBalance: parseFloatSafe(botData.usd),
-            coinBalance: parseFloatSafe(botData.bc),
-            startingUsdBalance: parseFloatSafe(botData.usd_given),
-            botType: botData.bot_type || 'unknown',
-          };
-          
-          console.log(`[API Game] Bot ${bot.botId}: is_toggled="${rawIsToggled}" → isActive=${isActive}`);
-          
-          return fullDetails;
-        } catch (error) {
-          console.error(`Error fetching bot ${bot.botId}:`, error);
-          // Return minimal info on error
+      const fullBotDetails = playerBots.map((bot: any) => {
+        const botKey = `bot:${gameId}:${bot.botId}`;
+        const botData = botDataMap.get(botKey);
+
+        if (!botData) {
+          // Bot not found in Redis, return minimal info
           return {
             botId: bot.botId,
             botName: bot.botName || 'Bot',
-            isActive: false,
+            isActive: bot.isActive ?? false,
             usdBalance: 0,
             coinBalance: 0,
             startingUsdBalance: 0,
           };
         }
-      }));
+
+        // Safely parse numeric values with fallback to 0
+        const parseFloatSafe = (value: any): number => {
+          if (value === null || value === undefined) return 0;
+          const parsed = parseFloat(String(value));
+          return isNaN(parsed) ? 0 : parsed;
+        };
+
+        // Parse isActive - Redis stores Python booleans as "True" or "False" strings
+        const rawIsToggled = botData.is_toggled;
+        const isActive = rawIsToggled === 'True' || rawIsToggled === 'true' || rawIsToggled === '1';
+
+        return {
+          botId: bot.botId,
+          botName: bot.botName || botData.bot_type || 'Bot',
+          isActive,
+          usdBalance: parseFloatSafe(botData.usd),
+          coinBalance: parseFloatSafe(botData.bc),
+          startingUsdBalance: parseFloatSafe(botData.usd_given),
+          botType: botData.bot_type || 'unknown',
+        };
+      });
 
       return {
         playerId,
@@ -121,7 +119,7 @@ export async function GET(
         lastInteractionV: lastInteractionValue,
         lastInteractionT: lastInteractionTime ? new Date(lastInteractionTime) : new Date(),
       };
-    }));
+    });
 
     // ✨ NEW: Get current price and market data from FastAPI if available
     let currentPrice = parseFloat(gameData.coinPrice || '100');
@@ -132,9 +130,9 @@ export async function GET(
     try {
       const backendUrl = process.env.FASTAPI_URL || 'http://localhost:8000';
 
-      // Add timeout to prevent slow API calls from blocking
+      // Reduced timeout to 200ms for faster polling
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 500); // 500ms timeout
+      const timeoutId = setTimeout(() => controller.abort(), 200);
 
       const marketResponse = await fetch(`${backendUrl}/api/game/market-data/${gameId}`, {
         signal: controller.signal,
@@ -154,9 +152,7 @@ export async function GET(
       }
     } catch (error) {
       // Continue with static price if FastAPI is not available or times out
-      if (error instanceof Error && error.name === 'AbortError') {
-        console.log('Market data fetch timed out');
-      }
+      // Don't log timeout errors to reduce console spam
     }
 
     const parsedData = {
@@ -193,7 +189,14 @@ export async function GET(
       priceHistoryLength: priceHistory.length
     };
 
-    return NextResponse.json({ game: parsedData, success: true });
+    const response = NextResponse.json({ game: parsedData, success: true });
+
+    // Add cache headers to ensure fresh data on every request
+    response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate, max-age=0');
+    response.headers.set('Pragma', 'no-cache');
+    response.headers.set('Expires', '0');
+
+    return response;
   } catch (error) {
     console.error('Error getting game:', error);
     return NextResponse.json(
