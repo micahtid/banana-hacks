@@ -68,6 +68,8 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const [togglingMinion, setTogglingMinion] = useState<string | null>(null);
   const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
+  const [rotMultiplier, setRotMultiplier] = useState<number>(1.0);
+  const [rotLevel, setRotLevel] = useState<number>(0);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
@@ -165,6 +167,91 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     return () => clearInterval(interval);
   }, [showLeaderboard, game.gameId]);
 
+  // --- Banana Rot Logic ---
+  useEffect(() => {
+    const COOLDOWN_SECONDS = 7.5;
+
+    const calculateRot = () => {
+      // Get last interaction time and value for current user
+      const lastInteractionTime = currentUser.lastInteractionTime || currentUser.lastInteractionT;
+      const lastInteractionValue = currentUser.lastInteractionValue || currentUser.lastInteractionV || 0;
+
+      if (!lastInteractionTime) {
+        // No trades yet, coins are fresh
+        setRotMultiplier(1.0);
+        setRotLevel(0);
+        return;
+      }
+
+      // Calculate seconds since last trade
+      let lastTradeDate: Date;
+      if (typeof lastInteractionTime === 'object' && 'seconds' in lastInteractionTime) {
+        lastTradeDate = new Date((lastInteractionTime as { seconds: number }).seconds * 1000);
+      } else if (lastInteractionTime instanceof Date) {
+        lastTradeDate = lastInteractionTime;
+      } else {
+        lastTradeDate = new Date(lastInteractionTime as string);
+      }
+
+      const now = new Date();
+      const secondsSinceLastTrade = Math.floor((now.getTime() - lastTradeDate.getTime()) / 1000);
+
+      // Apply cooldown period
+      if (secondsSinceLastTrade < COOLDOWN_SECONDS) {
+        // Still in cooldown, coins are fresh
+        setRotMultiplier(1.0);
+        setRotLevel(0);
+        return;
+      }
+
+      // Calculate time after cooldown (t in the formula)
+      const t = secondsSinceLastTrade - COOLDOWN_SECONDS;
+
+      // Calculate decay coefficient based on lastInteractionValue
+      // Larger trades = slower decay (reward large trades)
+      // Formula: coefficient = minCoeff + (maxCoeff - minCoeff) / (1 + lastInteractionValue/scaleFactor)
+      // This gives a range of ~0.01 (very large trades) to ~0.05 (tiny trades)
+      const minCoeff = 0.01;  // Slowest decay for large trades
+      const maxCoeff = 0.05;  // Fastest decay for tiny trades
+      const scaleFactor = 1000; // Adjust this to tune sensitivity
+
+      // Use absolute value of lastInteractionValue (in case it's negative for sells)
+      // If no trade value, default to a reasonable mid-range coefficient
+      const tradeSize = Math.abs(lastInteractionValue) || 100; // Default to 100 if undefined/0
+      const coefficient = minCoeff + (maxCoeff - minCoeff) / (1 + tradeSize / scaleFactor);
+
+      // Apply exponential decay: e^(-coefficient * t)
+      const multiplier = Math.exp(-coefficient * t);
+
+      // Debug logging (only log occasionally to avoid spam)
+      if (t % 5 === 0 && t > 0) {
+        console.log('[Rot Debug]', {
+          t,
+          lastInteractionValue: tradeSize,
+          coefficient: coefficient.toFixed(4),
+          multiplier: multiplier.toFixed(4),
+          secondsSinceLastTrade
+        });
+      }
+
+      setRotMultiplier(multiplier);
+
+      // Determine rot level for color changes (every 5 seconds after cooldown)
+      // Level 0: 0-5s (fresh - ripe yellow)
+      // Level 1: 5-10s (slightly brown)
+      // Level 2: 10-15s (brown)
+      // Level 3: 15-20s (dark brown)
+      // Level 4: 20s+ (nearly black/rotten)
+      const level = Math.min(4, Math.floor(t / 5));
+      setRotLevel(level);
+    };
+
+    // Update rot calculation every second
+    calculateRot();
+    const interval = setInterval(calculateRot, 1000);
+    return () => clearInterval(interval);
+  }, [currentUser.lastInteractionTime, currentUser.lastInteractionT, currentUser.lastInteractionValue, currentUser.lastInteractionV]);
+
   // --- Actions ---
   const handleBuy = async () => {
     if (!user || !amount || parseFloat(amount) <= 0) return;
@@ -219,8 +306,53 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   // --- Wallet Data ---
   const usd = typeof currentUser.usd === "number" ? currentUser.usd : 0;
-  const coins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
+  const rawCoins = typeof currentUser.coins === "number" ? currentUser.coins : 0;
+  const coins = rawCoins * rotMultiplier; // Apply rot decay
   const minions = Array.isArray(currentUser.bots) ? currentUser.bots : [];
+
+  // Banana rot color mapping
+  const getRotColor = (level: number): { bg: string; border: string; text: string } => {
+    switch (level) {
+      case 0:
+        // Fresh - Ripe yellow
+        return {
+          bg: "bg-yellow-100",
+          border: "border-yellow-400",
+          text: "text-yellow-900"
+        };
+      case 1:
+        // Slightly brown
+        return {
+          bg: "bg-amber-100",
+          border: "border-amber-500",
+          text: "text-amber-900"
+        };
+      case 2:
+        // Brown
+        return {
+          bg: "bg-orange-200",
+          border: "border-orange-600",
+          text: "text-orange-950"
+        };
+      case 3:
+        // Dark brown
+        return {
+          bg: "bg-amber-800",
+          border: "border-amber-900",
+          text: "text-amber-100"
+        };
+      case 4:
+      default:
+        // Nearly black/rotten
+        return {
+          bg: "bg-stone-900",
+          border: "border-stone-950",
+          text: "text-stone-300"
+        };
+    }
+  };
+
+  const rotColors = getRotColor(rotLevel);
 
   // Bot price mapping for performance calculation
   const BOT_PRICES: { [key: string]: number } = {
@@ -420,9 +552,9 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
                   ${usd.toFixed(2)}
                 </div>
               </div>
-              <div className="p-3 bg-[var(--background)] border-2 border-[var(--border)]">
+              <div className={`p-3 border-2 transition-colors duration-500 ${rotColors.bg} ${rotColors.border}`}>
                 <div className="text-sm text-[var(--primary)]">Banana Coins</div>
-                <div className="font-retro text-2xl text-[var(--primary-dark)]">
+                <div className={`font-retro text-2xl transition-colors duration-500 ${rotColors.text}`}>
                   {coins.toFixed(2)} BC
                 </div>
               </div>
