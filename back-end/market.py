@@ -115,34 +115,57 @@ class Market:
         # Increment tick
         self.current_tick += 1
         
+        # Ensure supplies are always above minimum thresholds BEFORE any calculations
+        MIN_BC_SUPPLY = 10000.0  # Increased minimum to prevent extreme price swings
+        MIN_DOLLAR_SUPPLY = 10000.0
+        
+        self.bc_supply = max(MIN_BC_SUPPLY, self.bc_supply)
+        self.dollar_supply = max(MIN_DOLLAR_SUPPLY, self.dollar_supply)
+        
         # Simulate market activity with random trades to change supplies
         # This creates realistic price movement with higher volatility
         for _ in range(num_simulated_trades):
-            current_price = self.dollar_supply / self.bc_supply if self.bc_supply > 0 else 1.0
+            # Calculate current price safely
+            if self.bc_supply <= 0:
+                self.bc_supply = MIN_BC_SUPPLY
+            if self.dollar_supply <= 0:
+                self.dollar_supply = MIN_DOLLAR_SUPPLY
+            
+            current_price = self.dollar_supply / self.bc_supply
             
             # Much larger, variable trade sizes for more volatility
-            # Trade between 0.5% to 2% of current BC supply
-            min_trade = self.bc_supply * 0.005  # 0.5%
-            max_trade = self.bc_supply * 0.02   # 2%
+            # Trade between 0.3% to 1.5% of current BC supply (reduced to prevent extreme swings)
+            min_trade = self.bc_supply * 0.003  # 0.3%
+            max_trade = self.bc_supply * 0.015   # 1.5%
             trade_size = random.uniform(min_trade, max_trade)
             
             # Random buy or sell (50/50 chance)
             if random.random() > 0.5:
                 # Simulated buy: BC leaves market, USD enters market
-                self.bc_supply -= trade_size
-                self.dollar_supply += current_price * trade_size
+                new_bc_supply = self.bc_supply - trade_size
+                new_dollar_supply = self.dollar_supply + current_price * trade_size
+                
+                # Only apply trade if it doesn't violate minimum constraints
+                if new_bc_supply >= MIN_BC_SUPPLY and new_dollar_supply >= MIN_DOLLAR_SUPPLY:
+                    self.bc_supply = new_bc_supply
+                    self.dollar_supply = new_dollar_supply
             else:
                 # Simulated sell: BC enters market, USD leaves market
-                self.bc_supply += trade_size
-                self.dollar_supply -= current_price * trade_size
-            
-            # Ensure supplies don't go negative or too low
-            self.bc_supply = max(1000, self.bc_supply)
-            self.dollar_supply = max(1000, self.dollar_supply)
+                new_bc_supply = self.bc_supply + trade_size
+                new_dollar_supply = self.dollar_supply - current_price * trade_size
+                
+                # Only apply trade if it doesn't violate minimum constraints
+                if new_bc_supply >= MIN_BC_SUPPLY and new_dollar_supply >= MIN_DOLLAR_SUPPLY:
+                    self.bc_supply = new_bc_supply
+                    self.dollar_supply = new_dollar_supply
         
-        # Calculate new price with updated supplies
+        # Ensure supplies are still above minimums after all trades
+        self.bc_supply = max(MIN_BC_SUPPLY, self.bc_supply)
+        self.dollar_supply = max(MIN_DOLLAR_SUPPLY, self.dollar_supply)
+        
+        # Calculate new price with updated supplies (guaranteed safe division)
         new_price = self.dollar_supply / self.bc_supply
-        new_price = max(0.01, new_price)  # Ensure price doesn't go below 0.01
+        new_price = max(0.10, min(new_price, 100.0))  # Clamp price between $0.10 and $100
         
         # Update price history
         self.market_data.price_history.append(new_price)
