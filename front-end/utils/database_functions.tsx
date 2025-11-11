@@ -273,9 +273,16 @@ export const buyCoins = async (
     body: JSON.stringify({ gameId, userId, amount: numBC }),
   });
 
+  const data = await response.json();
+
+  // Check for HTTP errors
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to buy coins');
+    throw new Error(data.error || 'Failed to buy coins');
+  }
+
+  // Check for success: false (backend returned 200 but transaction failed)
+  if (data.success === false) {
+    throw new Error(data.error || data.message || 'Transaction failed');
   }
 };
 
@@ -293,9 +300,16 @@ export const sellCoins = async (
     body: JSON.stringify({ gameId, userId, amount: numBC }),
   });
 
+  const data = await response.json();
+
+  // Check for HTTP errors
   if (!response.ok) {
-    const error = await response.json();
-    throw new Error(error.error || 'Failed to sell coins');
+    throw new Error(data.error || 'Failed to sell coins');
+  }
+
+  // Check for success: false (backend returned 200 but transaction failed)
+  if (data.success === false) {
+    throw new Error(data.error || data.message || 'Transaction failed');
   }
 };
 

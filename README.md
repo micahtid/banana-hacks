@@ -22,7 +22,17 @@ Players start with $1,000 and must navigate fluctuating prices that update every
 ### AI/ML
 - **Google Gemini 2.5 Pro API** for generating custom trading bot strategies
 
+<<<<<<< HEAD
 ## Infrastructure & Tools
+=======
+## Redis Setup
+
+You can host your own Redis server and access it through Tailscale for secure remote access. This allows you to run Redis on a separate machine while keeping it accessible only to devices on your Tailscale network.
+
+For additional setup steps, see the [Tailscale documentation on accessing services](https://tailscale.com/kb/1015/100.x-addresses).
+
+## Setup
+>>>>>>> c22b7081549282ac6aad13e3f942afdff5ccfc50
 
 ### Redis Database with Tailscale VPN
 
