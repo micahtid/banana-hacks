@@ -2,6 +2,16 @@ import Redis from 'ioredis';
 
 let redis: Redis | null = null;
 
+/**
+ * Get singleton Redis client instance
+ * Environment variables:
+ * - REDIS_IP: Redis server IP address
+ * - REDIS_PORT: Redis server port
+ * - REDIS_PASSWORD: Redis password
+ *
+ * Note: Default credentials are for development only.
+ * Set environment variables in production for security.
+ */
 export function getRedisClient(): Redis {
   if (!redis) {
     redis = new Redis({
@@ -15,11 +25,11 @@ export function getRedisClient(): Redis {
     });
 
     redis.on('error', (err) => {
-      console.error('Redis connection error:', err);
+      // Redis connection error
     });
 
     redis.on('connect', () => {
-      console.log('Connected to Redis');
+      // Connected to Redis
     });
   }
 

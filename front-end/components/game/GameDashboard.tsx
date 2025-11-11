@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { type Game, type User, type LeaderboardEntry, getLeaderboard } from "@/utils/database_functions";
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
@@ -30,7 +31,7 @@ function EndGameScreen({ game, currentUser }: GameDashboardProps) {
         const data = await getLeaderboard(game.gameId ?? "");
         setLeaderboard(data || []);
       } catch (error) {
-        console.error('Failed to fetch final leaderboard:', error);
+        // Error fetching leaderboard
       } finally {
         setLoading(false);
       }

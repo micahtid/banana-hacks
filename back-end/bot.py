@@ -1,18 +1,26 @@
-import random
-import math
-from typing import List, Dict, Optional
-from dataclasses import dataclass
-import uuid
+# Standard library imports
 import json
-import re
+import logging
+import math
 import os
-from redis_helper import get_redis_connection
+import random
+import time
+import uuid
+from typing import Dict, List, Optional
+
+# Third-party imports
+from dotenv import load_dotenv
 from google import genai
 from google.genai import types
-from dotenv import load_dotenv
+
+# Local imports
+from redis_helper import get_redis_connection
 
 # Load environment variables
 load_dotenv()
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -129,16 +137,16 @@ Remember: Output ONLY the Python code, nothing else."""
             if test_result is None:
                 raise ValueError("Strategy returned None")
             
-            print(f"Custom strategy validated successfully. Test result: {test_result}")
+            logger.debug(f"Custom strategy validated successfully. Test result: {test_result}")
             
         except Exception as e:
-            print(f"Generated code failed validation: {e}")
+            logger.error(f"Generated code failed validation: {e}")
             raise ValueError(f"Generated code failed validation: {e}")
-        
+
         return code
-        
+
     except Exception as e:
-        print(f"Error generating custom bot strategy: {e}")
+        logger.error(f"Error generating custom bot strategy: {e}")
         # Return a safe default strategy
         return """def custom_strategy(coins, current_price):
     if len(coins) < 2:
@@ -516,7 +524,7 @@ class Bot:
             Dict with 'action' and 'amount' keys
         """
         if not self.custom_strategy_code:
-            print(f"Warning: Bot {self.bot_id} has no custom strategy code, defaulting to hold")
+            logger.warning(f"Bot {self.bot_id} has no custom strategy code, defaulting to hold")
             return {'action': 'hold', 'amount': 0.0}
         
         try:
@@ -551,7 +559,7 @@ class Bot:
             
             # Check if the custom_strategy function was defined
             if 'custom_strategy' not in safe_globals:
-                print(f"Error: custom_strategy function not found in generated code")
+                logger.error("custom_strategy function not found in generated code")
                 return {'action': 'hold', 'amount': 0.0}
             
             # Call the custom strategy function
@@ -559,17 +567,17 @@ class Bot:
             
             # Validate result format
             if not isinstance(result, dict):
-                print(f"Error: custom_strategy returned non-dict: {type(result)}")
+                logger.error(f"custom_strategy returned non-dict: {type(result)}")
                 return {'action': 'hold', 'amount': 0.0}
-            
+
             if 'action' not in result or 'amount' not in result:
-                print(f"Error: custom_strategy missing required keys: {result.keys()}")
+                logger.error(f"custom_strategy missing required keys: {result.keys()}")
                 return {'action': 'hold', 'amount': 0.0}
-            
+
             # Validate action
             action = result['action']
             if action not in ['buy', 'sell', 'hold']:
-                print(f"Error: invalid action '{action}', defaulting to hold")
+                logger.error(f"Invalid action '{action}', defaulting to hold")
                 return {'action': 'hold', 'amount': 0.0}
             
             # Validate and clamp amount
@@ -580,15 +588,13 @@ class Bot:
                 # Clamp to reasonable range (increased to allow larger trades - 20x scale)
                 amount = min(max(amount, 0.0), 1000.0)
             except (ValueError, TypeError):
-                print(f"Error: invalid amount '{result['amount']}'")
+                logger.error(f"Invalid amount '{result['amount']}'")
                 return {'action': 'hold', 'amount': 0.0}
-            
+
             return {'action': action, 'amount': amount}
-            
+
         except Exception as e:
-            print(f"Error executing custom strategy for bot {self.bot_id}: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"Error executing custom strategy for bot {self.bot_id}: {e}", exc_info=True)
             return {'action': 'hold', 'amount': 0.0}
     
     def buy(self, amount: float, price: float, game_data: Dict, user_id: Optional[str] = None) -> bool:
@@ -733,9 +739,10 @@ class Bot:
             # Add to game's bot set
             bots_set_key = f"bots:{game_id}"
             r.sadd(bots_set_key, self.bot_id)
-            
+
+
         except Exception as e:
-            print(f"Warning: Failed to save bot {self.bot_id} to Redis: {e}")
+            logger.warning(f"Failed to save bot {self.bot_id} to Redis: {e}")
     
     @classmethod
     def load_from_redis(cls, game_id: str, bot_id: str) -> Optional['Bot']:
@@ -787,9 +794,9 @@ class Bot:
             bot.parameters = parameters
             
             return bot
-            
+
         except Exception as e:
-            print(f"Error loading bot {bot_id} from Redis: {e}")
+            logger.error(f"Error loading bot {bot_id} from Redis: {e}")
             return None
     
     def remove_from_redis(self, game_id: str):
@@ -802,9 +809,9 @@ class Bot:
             
             bots_set_key = f"bots:{game_id}"
             r.srem(bots_set_key, self.bot_id)
-            
+
         except Exception as e:
-            print(f"Warning: Failed to remove bot {self.bot_id} from Redis: {e}")
+            logger.warning(f"Failed to remove bot {self.bot_id} from Redis: {e}")
     
     def run(self, game_id: str, update_interval: float = 1.0):
         """
@@ -815,9 +822,7 @@ class Bot:
             game_id: Game ID where the bot operates
             update_interval: Time in seconds between trading decisions (default: 1.0)
         """
-        import time
-        
-        print(f"Bot {self.bot_id} started running in game {game_id}")
+        logger.info(f"Bot {self.bot_id} started running in game {game_id}")
         last_trade_time = 0
         iteration_count = 0
         
@@ -838,7 +843,7 @@ class Bot:
                 bot_key = f"bot:{game_id}:{self.bot_id}"
                 if not r.exists(bot_key):
                     # Bot removed, exit
-                    print(f"Bot {self.bot_id} removed, stopping")
+                    logger.info(f"Bot {self.bot_id} removed, stopping")
                     break
                 
                 # Check if game has ended - if so, stop the bot
@@ -848,7 +853,7 @@ class Bot:
                     is_ended = game_data.get('isEnded', 'false').lower() == 'true'
                     if is_ended:
                         # Game has ended, stop this bot
-                        print(f"Bot {self.bot_id} stopping - game {game_id} has ended")
+                        logger.info(f"Bot {self.bot_id} stopping - game {game_id} has ended")
                         self.is_toggled = False
                         self.save_to_redis(game_id)
                         break
@@ -894,17 +899,15 @@ class Bot:
                             
                             # Save updated game data back to Redis
                             self._save_game_data_to_redis(game_id, game_data)
-                            
-                            print(f"Bot {self.bot_id} executed {decision['action']} of {decision['amount']} BC at {current_price}")
+
+                            logger.debug(f"Bot {self.bot_id} executed {decision['action']} of {decision['amount']:.2f} BC at ${current_price:.2f}")
                 
                 # Periodically save bot state (every 5 iterations to reduce Redis writes)
                 if iteration_count % 5 == 0:
                     self.save_to_redis(game_id)
                 
             except Exception as e:
-                print(f"Error in Bot.run() for {self.bot_id}: {e}")
-                import traceback
-                traceback.print_exc()
+                logger.error(f"Error in Bot.run() for {self.bot_id}: {e}", exc_info=True)
                 # Short sleep on error to avoid rapid error loops
                 time.sleep(0.5)
     
@@ -951,9 +954,9 @@ class Bot:
                     return [coin_price]
             
             return []
-            
+
         except Exception as e:
-            print(f"Error getting coins from Redis: {e}")
+            logger.error(f"Error getting coins from Redis: {e}")
             return []
     
     def _get_game_data_from_redis(self, game_id: str) -> Optional[Dict]:
@@ -999,9 +1002,9 @@ class Bot:
                 game_data['totalUsd'] = float(game_data['totalUsd'])
             
             return game_data
-            
+
         except Exception as e:
-            print(f"Error getting game data from Redis: {e}")
+            logger.error(f"Error getting game data from Redis: {e}")
             return None
     
     def _save_game_data_to_redis(self, game_id: str, game_data: Dict):
@@ -1034,9 +1037,9 @@ class Bot:
                     update_data[key] = str(value)
             
             r.hset(game_key, mapping=update_data)
-            
+
         except Exception as e:
-            print(f"Error saving game data to Redis: {e}")
+            logger.error(f"Error saving game data to Redis: {e}")
     
     def to_dict(self) -> Dict:
         """

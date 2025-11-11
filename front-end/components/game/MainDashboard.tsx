@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
@@ -354,7 +355,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
         const data = await getLeaderboard(game.gameId ?? "");
         setLeaderboard(data);
       } catch (error) {
-        console.error("Failed to fetch leaderboard:", error);
+        // Error fetching leaderboard
       }
     };
 
@@ -439,18 +440,7 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
       // Apply exponential decay: e^(-coefficient * t)
       const multiplier = Math.exp(-coefficient * t);
 
-      // Debug logging (only log occasionally to avoid spam)
-      if (secondsSinceLastTrade % 5 === 0 && secondsSinceLastTrade > 0) {
-        console.log('[Rot Debug]', {
-          tradeSize,
-          cooldownSeconds: cooldownSeconds.toFixed(2),
-          secondsSinceLastTrade,
-          timeAfterCooldown: t.toFixed(1),
-          coefficient: coefficient.toFixed(4),
-          multiplier: multiplier.toFixed(4),
-          rotLevel: Math.min(4, Math.floor(t / 5))
-        });
-      }
+      // Calculate rot multiplier and level
 
       setRotMultiplier(multiplier);
 
@@ -481,7 +471,6 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to buy coins";
       setActionError(errorMessage);
-      console.error("Failed to buy coins:", error);
     } finally {
       setActionLoading(null);
     }
@@ -497,7 +486,6 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : "Failed to sell coins";
       setActionError(errorMessage);
-      console.error("Failed to sell coins:", error);
     } finally {
       setActionLoading(null);
     }
@@ -505,24 +493,12 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
 
   const handleToggleMinion = async (minionId: string) => {
     if (!user) return;
-    
-    console.log('[MainDashboard] Toggling minion:', {
-      minionId,
-      userId: currentUser.userId,
-      gameId: game.gameId
-    });
-    
+
     setTogglingMinion(minionId);
     try {
       await toggleMinion(minionId, currentUser.userId, game.gameId ?? "");
-      console.log('[MainDashboard] ✓ Minion toggled successfully');
-      
-      // Force refresh by waiting a moment for Redis to update
-      setTimeout(() => {
-        console.log('[MainDashboard] State should refresh from polling');
-      }, 100);
     } catch (error) {
-      console.error("[MainDashboard] ❌ Failed to toggle minion:", error);
+      // Error toggling minion
     } finally {
       setTogglingMinion(null);
     }

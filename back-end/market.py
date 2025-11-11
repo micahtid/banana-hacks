@@ -1,11 +1,18 @@
-import random
+# Standard library imports
+import json
+import logging
 import math
-from typing import List, Dict, Optional, Tuple
+import random
+import uuid
 from datetime import datetime, timedelta
 from dataclasses import dataclass, field
-import uuid
-import json
+from typing import Dict, List, Optional, Tuple
+
+# Local imports
 from redis_helper import get_redis_connection, serialize_datetime, deserialize_datetime
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 @dataclass
 class MarketData:
@@ -260,7 +267,7 @@ class Market:
         self.bc_supply = max(MIN_BC_SUPPLY, self.bc_supply)
         self.dollar_supply = max(MIN_DOLLAR_SUPPLY, self.dollar_supply)
         
-        print(f"🎉 EVENT TRIGGERED: {self.event_title} - {'Positive' if is_positive else 'Negative'} shock of {shock_factor*100:.1f}%")
+        logger.info(f"EVENT TRIGGERED: {self.event_title} - {'Positive' if is_positive else 'Negative'} shock of {shock_factor*100:.1f}%")
     
     def save_to_redis(self):
         """Save all market data to Redis"""
@@ -296,7 +303,7 @@ class Market:
             
         except Exception as e:
             # Log error but don't fail the operation
-            print(f"Warning: Failed to save market data to Redis: {e}")
+            logger.warning(f"Failed to save market data to Redis: {e}")
     
     @classmethod
     def load_from_redis(cls, game_id: str) -> Optional['Market']:
@@ -357,9 +364,9 @@ class Market:
             market.event_triggered = event_triggered
             
             return market
-            
+
         except Exception as e:
-            print(f"Error loading market from Redis: {e}")
+            logger.error(f"Error loading market from Redis: {e}")
             return None
     
     def remove_from_redis(self):
@@ -371,4 +378,4 @@ class Market:
             r.delete(market_key)
             r.delete(market_data_key)
         except Exception as e:
-            print(f"Warning: Failed to remove market data from Redis: {e}")
+            logger.warning(f"Failed to remove market data from Redis: {e}")

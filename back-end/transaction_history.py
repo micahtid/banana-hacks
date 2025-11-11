@@ -4,10 +4,17 @@ Transaction History Management Module
 Manages transaction history in Redis for tracking all trades (user and bot) with timestamps.
 """
 
+# Standard library imports
 import json
-from typing import List, Dict, Optional
+import logging
 from datetime import datetime
+from typing import Dict, List, Optional
+
+# Local imports
 from redis_helper import get_redis_connection
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 class TransactionHistory:
@@ -58,9 +65,9 @@ class TransactionHistory:
             TransactionHistory._update_interactions(game_id, transaction)
             
             return True
-            
+
         except Exception as e:
-            print(f"Error adding transaction to history: {e}")
+            logger.error(f"Error adding transaction to history: {e}")
             return False
     
     @staticmethod
@@ -100,9 +107,9 @@ class TransactionHistory:
             # Ensure game has basic fields if it's new
             if not r.hexists(game_key, 'gameId'):
                 r.hset(game_key, 'gameId', game_id)
-            
+
         except Exception as e:
-            print(f"Error updating interactions: {e}")
+            logger.error(f"Error updating interactions: {e}")
     
     @staticmethod
     def get_transactions(game_id: str, limit: int = 100, offset: int = 0) -> List[Dict]:
@@ -143,9 +150,9 @@ class TransactionHistory:
                 transactions.append(tx)
             
             return transactions
-            
+
         except Exception as e:
-            print(f"Error getting transactions: {e}")
+            logger.error(f"Error getting transactions: {e}")
             return []
     
     @staticmethod
@@ -212,9 +219,9 @@ class TransactionHistory:
             }
             
             return stats
-            
+
         except Exception as e:
-            print(f"Error getting transaction stats: {e}")
+            logger.error(f"Error getting transaction stats: {e}")
             return {
                 'total_transactions': 0,
                 'buy_count': 0,
@@ -242,6 +249,6 @@ class TransactionHistory:
             r.delete(tx_key)
             return True
         except Exception as e:
-            print(f"Error clearing transactions: {e}")
+            logger.error(f"Error clearing transactions: {e}")
             return False
 

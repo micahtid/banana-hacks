@@ -1,8 +1,15 @@
-import threading
-from typing import Optional, Dict
+# Standard library imports
 import json
+import logging
+import threading
+from typing import Dict, Optional
+
+# Local imports
 from bot import Bot
 from redis_helper import get_redis_connection
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 # Global dictionary to track running bot threads
@@ -48,8 +55,8 @@ def buyBot(user_id: str, game_id: str, bot_type: str = 'random',
                 break
         
         if not user_found:
-            print(f"User {user_id} not found in game {game_id}")
-            print(f"Available players: {[p.get('userId') or p.get('playerId') for p in players]}")
+            logger.warning(f"User {user_id} not found in game {game_id}")
+            logger.debug(f"Available players: {[p.get('userId') or p.get('playerId') for p in players]}")
             return None
         
         # Create new bot
@@ -91,14 +98,12 @@ def buyBot(user_id: str, game_id: str, bot_type: str = 'random',
         
         # Track running bot
         _running_bots[f"{game_id}:{bot_id}"] = bot_thread
-        
-        print(f"Bot {bot_id} created and started for user {user_id} in game {game_id}")
+
+        logger.info(f"Bot {bot_id} created and started for user {user_id} in game {game_id}")
         return bot_id
-        
+
     except Exception as e:
-        print(f"Error in buyBot: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error in buyBot: {e}", exc_info=True)
         return None
 
 
@@ -119,7 +124,7 @@ def toggleBot(bot_id: str, game_id: str) -> bool:
         # Load bot from Redis
         bot = Bot.load_from_redis(game_id, bot_id)
         if bot is None:
-            print(f"Bot {bot_id} not found in game {game_id}")
+            logger.warning(f"Bot {bot_id} not found in game {game_id}")
             return False
         
         # Toggle the bot state
@@ -146,13 +151,11 @@ def toggleBot(bot_id: str, game_id: str) -> bool:
                             break
             
             r.hset(game_key, 'players', json.dumps(players))
-        
-        print(f"Bot {bot_id} toggled to {'ON' if bot.is_toggled else 'OFF'}")
+
+        logger.info(f"Bot {bot_id} toggled to {'ON' if bot.is_toggled else 'OFF'}")
         return True
-        
+
     except Exception as e:
-        print(f"Error in toggleBot: {e}")
-        import traceback
-        traceback.print_exc()
+        logger.error(f"Error in toggleBot: {e}", exc_info=True)
         return False
 

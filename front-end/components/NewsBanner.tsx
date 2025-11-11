@@ -20,12 +20,12 @@ interface NewsBannerProps {
    COMPONENT
    ============================================ */
 
-export default function NewsBanner({ newsText, isEventActive }: NewsBannerProps) {
+export const NewsBanner: React.FC<NewsBannerProps> = ({ newsText, isEventActive }) => {
   // Create a repeated text segment for seamless scrolling
   // Duplicate content 3 times to ensure seamless loop (animation moves by 50% = 1 of 2 copies)
   const textSegment = `${newsText} • `;
   const repeatedText = textSegment.repeat(6); // Enough repetitions for smooth scrolling
-  
+
   return (
     <div className="news-banner">
       <div className="news-banner-content">
@@ -47,5 +47,5 @@ export default function NewsBanner({ newsText, isEventActive }: NewsBannerProps)
       </div>
     </div>
   );
-}
+};
 

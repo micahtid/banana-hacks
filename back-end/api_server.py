@@ -3,21 +3,25 @@ FastAPI Server for Banana Coin Trading Game
 Implements background market updates with asyncio.create_task()
 """
 
-from fastapi import FastAPI, HTTPException, BackgroundTasks
+# Standard library imports
+import asyncio
+import json
+import logging
+import threading
+import time
+import uuid
+from datetime import datetime
+from typing import Dict, List, Optional
+
+# Third-party imports
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, List
-import asyncio
-import time
-import logging
-from datetime import datetime
 
-# Import existing modules
-from market import Market, MarketData
-from user import User
-from wallet import UserWallet
+# Local imports
 from bot import Bot, generate_custom_bot_strategy
-from bot_operations import buyBot, toggleBot
+from bot_operations import toggleBot
+from market import Market
 from redis_helper import get_redis_connection
 from transaction_history import TransactionHistory
 
@@ -87,15 +91,20 @@ class BotBuyRequest(BaseModel):
 
 async def run_market_updates(game_id: str, duration: int, update_interval: float):
     """
-    Background task that updates the market every `update_interval` seconds
+    Background task that updates the market every update_interval seconds
     for the specified duration. Optimized to maintain consistent timing.
+
+    Args:
+        game_id: Unique game identifier
+        duration: Total duration of the game in seconds
+        update_interval: Time between market updates in seconds
     """
     start_time = time.time()
     end_time = start_time + duration
     update_count = 0
     next_update_time = start_time + update_interval
     
-    logger.info(f"🎮 Starting market updates for game {game_id} - Duration: {duration}s")
+    logger.info(f"Starting market updates for game {game_id} - Duration: {duration}s")
     
     try:
         while time.time() < end_time:
@@ -147,7 +156,7 @@ async def run_market_updates(game_id: str, duration: int, update_interval: float
             next_update_time += update_interval
         
         # Game finished
-        logger.info(f"✅ Game {game_id} completed after {duration} seconds, {update_count} updates")
+        logger.info(f"Game {game_id} completed after {duration} seconds, {update_count} updates")
         
         # Mark game as ended in Redis and cache final leaderboard
         try:
@@ -238,18 +247,107 @@ async def run_market_updates(game_id: str, duration: int, update_interval: float
                     logger.info(f"Stopped {stopped_count} bots for ended game {game_id}")
         except Exception as e:
             logger.error(f"Error marking game {game_id} as ended or caching final leaderboard: {e}")
-        
+
     except asyncio.CancelledError:
-        logger.info(f"🛑 Game {game_id} was cancelled after {update_count} updates")
+        logger.info(f"Game {game_id} was cancelled after {update_count} updates")
         raise
     except Exception as e:
-        logger.error(f"❌ Fatal error in market updates for {game_id}: {e}")
+        logger.error(f"Fatal error in market updates for {game_id}: {e}")
     finally:
         # Clean up task reference
         if game_id in active_game_tasks:
             del active_game_tasks[game_id]
         if game_id in game_states:
             game_states[game_id]['status'] = 'completed'
+
+# ============================================================================
+# HELPER FUNCTIONS
+# ============================================================================
+
+async def _execute_with_retry(operation_func, max_retries: int = 100, backoff_factor: float = 0.1):
+    """
+    Execute an operation with exponential backoff retry logic.
+
+    Args:
+        operation_func: Async function to execute
+        max_retries: Maximum number of retry attempts
+        backoff_factor: Base delay for exponential backoff
+
+    Returns:
+        Result from operation_func if successful
+
+    Raises:
+        Last exception if all retries exhausted
+    """
+    retry_count = 0
+    last_exception = None
+
+    while retry_count < max_retries:
+        try:
+            return await operation_func()
+        except HTTPException:
+            raise
+        except Exception as e:
+            retry_count += 1
+            last_exception = e
+            if retry_count >= max_retries:
+                logger.error(f"Operation failed after {max_retries} retries: {e}")
+                raise HTTPException(status_code=500, detail=str(e))
+            await asyncio.sleep(backoff_factor * retry_count)
+            logger.warning(f"Operation failed, retrying ({retry_count}/{max_retries}): {e}")
+
+
+def _decode_bot_id(bot_id_bytes) -> str:
+    """
+    Decode bot ID from bytes if needed.
+
+    Args:
+        bot_id_bytes: Bot ID as bytes or string
+
+    Returns:
+        Decoded bot ID as string
+    """
+    return bot_id_bytes.decode('utf-8') if isinstance(bot_id_bytes, bytes) else bot_id_bytes
+
+
+def _get_player_balances(player_data: Dict) -> tuple:
+    """
+    Extract USD and coin balances from player data handling both field conventions.
+
+    Args:
+        player_data: Player dictionary from Redis
+
+    Returns:
+        Tuple of (usd_balance, coin_balance)
+    """
+    usd_balance = player_data.get('usd', player_data.get('usdBalance', 0))
+    coin_balance = player_data.get('coins', player_data.get('coinBalance', 0))
+    return float(usd_balance), float(coin_balance)
+
+
+def _update_player_balances(player_data: Dict, new_usd: float, new_coins: float):
+    """
+    Update player balances in both field name conventions.
+
+    Args:
+        player_data: Player dictionary to update
+        new_usd: New USD balance
+        new_coins: New coin balance
+    """
+    # Ensure non-negative balances
+    new_usd = max(0.0, new_usd)
+    new_coins = max(0.0, new_coins)
+
+    # Update both field name conventions
+    if 'usd' in player_data:
+        player_data['usd'] = new_usd
+    if 'usdBalance' in player_data:
+        player_data['usdBalance'] = new_usd
+    if 'coins' in player_data:
+        player_data['coins'] = new_coins
+    if 'coinBalance' in player_data:
+        player_data['coinBalance'] = new_coins
+
 
 # ============================================================================
 # API ENDPOINTS
@@ -1182,14 +1280,14 @@ async def root():
 
 @app.on_event("startup")
 async def startup_event():
-    logger.info("🍌 Banana Coin Trading API starting up...")
-    logger.info("✅ API ready to accept requests")
+    logger.info("Banana Coin Trading API starting up...")
+    logger.info("API ready to accept requests")
 
 
 @app.on_event("shutdown")
 async def shutdown_event():
-    logger.info("🛑 Shutting down API...")
-    
+    logger.info("Shutting down API...")
+
     # Cancel all active game tasks
     for game_id, task in active_game_tasks.items():
         logger.info(f"Cancelling task for game {game_id}")
@@ -1198,8 +1296,8 @@ async def shutdown_event():
             await task
         except asyncio.CancelledError:
             pass
-    
-    logger.info("✅ API shutdown complete")
+
+    logger.info("API shutdown complete")
 
 
 if __name__ == "__main__":

@@ -4,13 +4,22 @@ Handles random market events that affect coin prices throughout the game.
 Events are themed around bananas and stored in Redis.
 """
 
-import random
+# Standard library imports
 import json
-import numpy as np
-from typing import Dict, List, Optional, Tuple
+import logging
+import random
 from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple
+
+# Third-party imports
+import numpy as np
 from scipy.interpolate import CubicSpline
+
+# Local imports
 from redis_helper import get_redis_connection
+
+# Configure logging
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -388,7 +397,7 @@ class MarketEventSystem:
             return active_events
             
         except Exception as e:
-            print(f"Error getting active events: {e}")
+            logger.error(f"Error getting active events: {e}")
             return []
     
     def get_all_events(self) -> List[MarketEvent]:
@@ -418,9 +427,9 @@ class MarketEventSystem:
             # Sort by tick_occurred (most recent first)
             all_events.sort(key=lambda e: e.tick_occurred, reverse=True)
             return all_events
-            
+
         except Exception as e:
-            print(f"Error getting all events: {e}")
+            logger.error(f"Error getting all events: {e}")
             return []
     
     def calculate_price_impact(self, current_tick: int, base_price: float) -> Tuple[float, List[MarketEvent]]:
@@ -471,7 +480,7 @@ class MarketEventSystem:
             r.expire(event_key, 86400)
             
         except Exception as e:
-            print(f"Error saving event to Redis: {e}")
+            logger.error(f"Error saving event to Redis: {e}")
     
     def cleanup_old_events(self, current_tick: int, max_age_ticks: int = 1000):
         """
@@ -508,9 +517,9 @@ class MarketEventSystem:
             # Remove from set
             if events_to_remove:
                 r.srem(events_key, *events_to_remove)
-                
+
         except Exception as e:
-            print(f"Error cleaning up old events: {e}")
+            logger.error(f"Error cleaning up old events: {e}")
     
     def get_event_statistics(self) -> Dict:
         """
@@ -553,9 +562,9 @@ class MarketEventSystem:
                 r.delete(event_key)
             
             r.delete(events_key)
-            
+
         except Exception as e:
-            print(f"Error removing all events: {e}")
+            logger.error(f"Error removing all events: {e}")
 
 
 def integrate_event_system_with_market(market, current_tick: int) -> Tuple[float, List[MarketEvent]]:
@@ -574,8 +583,8 @@ def integrate_event_system_with_market(market, current_tick: int) -> Tuple[float
     # Check for new event
     new_event = event_system.check_for_event(current_tick)
     if new_event:
-        print(f"[EVENT] {new_event.name}: {new_event.description}")
-        print(f"        Impact: {((new_event.impact - 1.0) * 100):+.1f}%")
+        logger.info(f"[EVENT] {new_event.name}: {new_event.description}")
+        logger.info(f"        Impact: {((new_event.impact - 1.0) * 100):+.1f}%")
     
     # Calculate price impact from active events
     base_price = market.market_data.current_price

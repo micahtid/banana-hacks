@@ -1,7 +1,14 @@
-from dataclasses import dataclass, field
-from typing import List, Dict, Optional
-from datetime import datetime
+"""
+User Module
+
+Comprehensive user data model with trading and bot management capabilities.
+"""
+
+# Standard library imports
 import uuid
+from dataclasses import dataclass, field
+from datetime import datetime
+from typing import Dict, List, Optional
 
 
 @dataclass

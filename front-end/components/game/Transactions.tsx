@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { type Game, type User } from "@/utils/database_functions";
@@ -354,16 +355,6 @@ export default function Transactions({ game, currentUser }: TransactionsProps) {
   // Filter to only user transactions (no bots/minions)
   const userTransactions = allInteractions.filter((interaction) => {
     const isBot = isTransactionFromMinion(interaction);
-    // Debug: log first few interactions to help troubleshoot
-    if (allInteractions.indexOf(interaction) < 3) {
-      console.log('[Transactions] Interaction:', {
-        name: interaction.name,
-        type: interaction.type,
-        is_bot: (interaction as any).is_bot,
-        isBot: (interaction as any).isBot,
-        filtered: isBot
-      });
-    }
     return !isBot;
   });
 

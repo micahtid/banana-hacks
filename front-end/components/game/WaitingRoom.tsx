@@ -40,7 +40,6 @@ export default function WaitingRoom({ game, currentUser }: WaitingRoomProps) {
     try {
       await startRoom(game.gameId, user.uid);
     } catch (error) {
-      console.error("Failed to start game:", error);
       setIsStarting(false);
     }
   };

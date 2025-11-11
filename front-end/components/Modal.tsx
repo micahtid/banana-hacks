@@ -22,12 +22,12 @@ interface ModalProps {
    COMPONENT
    ============================================ */
 
-export default function Modal({
+export const Modal: React.FC<ModalProps> = ({
   isOpen,
   onClose,
   children,
   className = "",
-}: ModalProps) {
+}) => {
   if (!isOpen) return null;
 
   return (
@@ -40,5 +40,5 @@ export default function Modal({
       </div>
     </div>
   );
-}
+};
 

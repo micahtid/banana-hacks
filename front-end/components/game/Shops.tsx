@@ -1,5 +1,6 @@
 "use client";
 
+import React from "react";
 import { Card } from "@/components/Card";
 import { Button } from "@/components/Button";
 import { Input } from "@/components/Input";
@@ -263,42 +264,13 @@ export default function Shops({ game, currentUser }: ShopsProps) {
     };
   }, [(game as any).allGenericNews, (game as any).genericNews, game.eventTriggered, isEventActive]);
 
-  // Debug: Log currentUser when component mounts
-  useEffect(() => {
-    console.log('[Shops] Component mounted with currentUser:', {
-      currentUser,
-      hasUserId: 'userId' in currentUser,
-      userId: currentUser.userId,
-      userIdType: typeof currentUser.userId,
-      userName: currentUser.userName,
-      usd: currentUser.usd,
-      allKeys: Object.keys(currentUser)
-    });
-    console.log('[Shops] Game:', {
-      gameId: game.gameId,
-      hasGameId: 'gameId' in game,
-      gameIdType: typeof game.gameId
-    });
-  }, [currentUser, game]);
 
   const handleBuyPremade = async (minion: PremadeMinion) => {
-    if (!user) {
-      console.error('[Shops] User not logged in');
-      return;
-    }
-
-    if (!currentUser.userId) {
-      console.error('[Shops] User ID not available');
-      return;
-    }
-
-    if (!game.gameId) {
-      console.error('[Shops] Game ID not available');
+    if (!user || !currentUser.userId || !game.gameId) {
       return;
     }
 
     if (currentUser.usd < minion.price) {
-      console.warn(`[Shops] Insufficient USD: has $${currentUser.usd}, needs $${minion.price}`);
       return;
     }
 
@@ -312,46 +284,24 @@ export default function Shops({ game, currentUser }: ShopsProps) {
 
     setBuyingMinion(minion.id);
     try {
-      console.log('[Shops] Purchasing minion:', {
-        minionPrice: minion.price,
-        userId: currentUser.userId,
-        gameId: game.gameId,
-        minionType: minion.id,
-        botName: numberedBotName
-      });
-
       await buyMinion(minion.price, currentUser.userId, game.gameId, minion.id, numberedBotName);
-      console.log(`[Shops] ✅ Successfully purchased ${numberedBotName}!`);
     } catch (error) {
-      console.error("[Shops] ❌ Failed to buy minion:", error);
+      // Error buying minion
     } finally {
       setBuyingMinion(null);
     }
   };
 
   const handleBuyCustom = async () => {
-    if (!user) {
-      console.error('[Shops] User not logged in');
-      return;
-    }
-
-    if (!currentUser.userId) {
-      console.error('[Shops] User ID not available');
-      return;
-    }
-
-    if (!game.gameId) {
-      console.error('[Shops] Game ID not available');
+    if (!user || !currentUser.userId || !game.gameId) {
       return;
     }
 
     if (currentUser.usd < CUSTOM_MINION_PRICE) {
-      console.warn(`[Shops] Insufficient USD: has $${currentUser.usd}, needs $${CUSTOM_MINION_PRICE}`);
       return;
     }
 
     if (!customPrompt.trim()) {
-      console.warn("[Shops] Custom minion prompt is empty");
       return;
     }
 
@@ -365,19 +315,10 @@ export default function Shops({ game, currentUser }: ShopsProps) {
 
     setBuyingMinion("custom");
     try {
-      console.log('[Shops] Creating custom minion:', {
-        minionPrice: CUSTOM_MINION_PRICE,
-        userId: currentUser.userId,
-        gameId: game.gameId,
-        customPrompt,
-        botName: numberedBotName
-      });
-
       await buyMinion(CUSTOM_MINION_PRICE, currentUser.userId, game.gameId, "custom", numberedBotName, customPrompt);
       setCustomPrompt("");
-      console.log(`[Shops] ✅ Successfully created ${numberedBotName}!`);
     } catch (error) {
-      console.error("[Shops] ❌ Failed to buy custom minion:", error);
+      // Error buying custom minion
     } finally {
       setBuyingMinion(null);
     }

@@ -1,8 +1,17 @@
+/**
+ * Database Functions
+ *
+ * This file contains all Firebase authentication and game-related API functions.
+ * Note: Firebase config is embedded for simplicity. For production apps,
+ * consider moving sensitive config to environment variables.
+ */
+
 import { initializeApp } from "firebase/app";
 import { getAuth, GoogleAuthProvider, signInWithPopup } from "firebase/auth";
 
-// initializing firebase: auth and login
-// sign in and sign out functions
+/* ============================================
+   FIREBASE INITIALIZATION
+   ============================================ */
 
 export const initializeFirebase = () => {
   const firebaseConfig = {
@@ -25,24 +34,22 @@ export const getUserAuth = (alreadyInit: boolean) => {
   }
   const auth = getAuth();
   return auth;
-}
-
+};
 
 export const signIn = () => {
   const auth = getUserAuth(false);
   const provider = new GoogleAuthProvider();
-//   signInWithRedirect(auth, provider);
   signInWithPopup(auth, provider);
-}
+};
 
 export const signOut = () => {
   const auth = getUserAuth(false);
   auth.signOut();
-}
+};
 
-// ============================================
-// GAME FUNCTIONS
-// ============================================
+/* ============================================
+   TYPE DEFINITIONS
+   ============================================ */
 
 export interface Bot {
   botId: string;
@@ -199,7 +206,6 @@ export const getRoom = (
         onUpdate(null);
       }
     } catch (error) {
-      console.error('Error fetching game:', error);
       onUpdate(null);
     }
   };
@@ -304,49 +310,31 @@ export const buyMinion = async (
   botName?: string,
   customPrompt?: string
 ): Promise<void> => {
-  // Validate parameters before sending
-  console.log('[buyMinion] Parameters received:', {
-    minionPrice,
-    userId,
-    gameId,
-    minionType,
-    customPrompt: customPrompt ? '(provided)' : '(none)',
-    // Type checking
-    userIdType: typeof userId,
-    gameIdType: typeof gameId,
-    minionTypeType: typeof minionType
-  });
-
+  // Validate parameters
   if (!userId || userId === 'undefined' || userId === 'null') {
-    console.error('[buyMinion] Invalid userId:', userId);
     throw new Error(`userId is required but was not provided (received: ${userId})`);
   }
 
   if (!gameId || gameId === 'undefined' || gameId === 'null') {
-    console.error('[buyMinion] Invalid gameId:', gameId);
     throw new Error(`gameId is required but was not provided (received: ${gameId})`);
   }
 
   if (!minionType || minionType === 'undefined' || minionType === 'null') {
-    console.error('[buyMinion] Invalid minionType:', minionType);
     throw new Error(`minionType is required but was not provided (received: ${minionType})`);
   }
 
   if (minionPrice === undefined || minionPrice === null || minionPrice <= 0) {
-    console.error('[buyMinion] Invalid minionPrice:', minionPrice);
     throw new Error(`Invalid minionPrice: ${minionPrice}`);
   }
 
-  const requestBody = { 
-    gameId, 
-    userId, 
-    botType: minionType,  // Backend still uses 'botType' internally
-    botName: botName,  // Display name for the minion
-    cost: minionPrice, 
-    customPrompt 
+  const requestBody = {
+    gameId,
+    userId,
+    botType: minionType,
+    botName: botName,
+    cost: minionPrice,
+    customPrompt
   };
-
-  console.log('[buyMinion] Sending request to /api/bot/buy:', requestBody);
 
   try {
     const response = await fetch('/api/bot/buy', {
@@ -355,23 +343,17 @@ export const buyMinion = async (
       body: JSON.stringify(requestBody),
     });
 
-    console.log('[buyMinion] Response status:', response.status);
-
     if (!response.ok) {
       let errorData;
       try {
         errorData = await response.json();
-        console.error('[buyMinion] Error response:', errorData);
-        console.error('[buyMinion] Full error object:', JSON.stringify(errorData, null, 2));
       } catch (e) {
-        console.error('[buyMinion] Could not parse error response');
         throw new Error(`Minion purchase failed with status ${response.status}`);
       }
-      
+
       // Handle Pydantic validation errors (FastAPI format)
       if (errorData.detail) {
         if (Array.isArray(errorData.detail)) {
-          // Pydantic validation error array
           const errorMessages = errorData.detail.map((err: any) => {
             const field = err.loc ? err.loc.join('.') : 'unknown';
             const msg = err.msg || 'validation error';
@@ -379,19 +361,13 @@ export const buyMinion = async (
           }).join(', ');
           throw new Error(`Validation error: ${errorMessages}`);
         } else if (typeof errorData.detail === 'string') {
-          // Simple error message
           throw new Error(errorData.detail);
         }
       }
-      
-      // Fallback to .error field (our custom format)
+
       throw new Error(errorData.error || `Failed to buy minion (status ${response.status})`);
     }
-
-    const result = await response.json();
-    console.log('[buyMinion] Success:', result);
   } catch (error) {
-    console.error('[buyMinion] Exception:', error);
     throw error;
   }
 };
@@ -404,24 +380,16 @@ export const toggleMinion = async (
   userId: string,
   gameId: string
 ): Promise<void> => {
-  console.log('[toggleMinion] Request:', { minionId, userId, gameId });
-
   const response = await fetch('/api/bot/toggle', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ gameId, userId, botId: minionId }),  // Backend still uses 'botId' internally
+    body: JSON.stringify({ gameId, userId, botId: minionId }),
   });
-
-  console.log('[toggleMinion] Response status:', response.status);
 
   if (!response.ok) {
     const error = await response.json();
-    console.error('[toggleMinion] Error:', error);
     throw new Error(error.error || 'Failed to toggle minion');
   }
-
-  const result = await response.json();
-  console.log('[toggleMinion] Success:', result);
 };
 
 /**

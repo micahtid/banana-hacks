@@ -76,6 +76,13 @@ logs/
 *.temp
 .cache/
 
-# Local history / VS Code
+# Local history / VS Code / IDEs
 .history/
 .specstory/
+.cursorindexingignore
+
+# Test files and documentation (kept in respective folders)
+check_backend.py
+test_bot_buy_endpoint.py
+DATA.md
+requirements.txt
