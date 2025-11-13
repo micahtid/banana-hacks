@@ -16,11 +16,32 @@ Copy from `example.env`.
 - Back‑end: `REDIS_IP`, `REDIS_PORT`, `REDIS_PASSWORD` (optional)
 - Front‑end: `NEXT_PUBLIC_API_BASE`, Firebase client vars
 
-## Redis Setup
+## Server Architecture
 
-You can host your own Redis server and access it through Tailscale for secure remote access. This allows you to run Redis on a separate machine while keeping it accessible only to devices on your Tailscale network.
+### Redis Setup
 
-For additional setup steps, see the [Tailscale documentation on accessing services](https://tailscale.com/kb/1015/100.x-addresses).
+This application uses a **local Redis server** for real-time game state management, price updates, and player interactions. Redis handles:
+- Live price data and market events
+- Player wallets and trading history
+- Trading bot state and operations
+- Real-time leaderboard updates
+
+You can host your own Redis server locally or on a separate machine.
+
+### Tailscale for Remote Access
+
+The project is configured to use **Tailscale** for secure remote access to the Redis server. This setup allows:
+- Running Redis on any machine on your Tailscale network
+- Secure, encrypted connections without exposing Redis to the internet
+- Easy multi-device access (play from laptop, run server on desktop)
+
+To set up Tailscale for your Redis server:
+1. Install Tailscale on both the server machine and client devices
+2. Note the Tailscale IP address of your Redis server (e.g., `100.x.y.z`)
+3. Set `REDIS_IP` in your `.env` to the Tailscale IP
+4. Your Redis server is now securely accessible across your Tailscale network
+
+For more details, see the [Tailscale documentation on accessing services](https://tailscale.com/kb/1015/100.x-addresses).
 
 ## Setup
 
@@ -62,7 +83,15 @@ front-end/
 │   │   └── WaitingRoom.tsx    # Pre-game lobby
 │   ├── Button.tsx             # Reusable button component
 │   ├── Card.tsx               # Reusable card container
-│   └── Input.tsx              # Reusable input component
+│   ├── Input.tsx              # Reusable input component
+│   ├── Modal.tsx              # Modal overlay component
+│   ├── NewsBanner.tsx         # Scrolling news banner
+│   └── StatDisplay.tsx        # Stat label-value display
+├── hooks/                     # Custom React hooks
+│   ├── useEventNews.ts        # Event and news state management
+│   └── useGameTimer.ts        # Game timer and countdown logic
+├── constants/                 # Configuration constants
+│   └── minions.ts             # Bot prices and configurations
 ├── providers/                 # React Context providers
 │   └── UserProvider.tsx       # Firebase auth state management
 └── utils/                     # Utility functions
