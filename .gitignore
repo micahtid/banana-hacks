@@ -79,3 +79,10 @@ logs/
 # Local history / VS Code
 .history/
 .specstory/
+.cursorindexingignore
+
+# Documentation (temporary)
+docs/
+
+# Root-level files (should be organized in subdirectories)
+example.env

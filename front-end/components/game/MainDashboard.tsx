@@ -14,6 +14,7 @@ import {
 } from "@/utils/database_functions";
 import { useState, useEffect, useMemo, useRef } from "react";
 import { useUser } from "@/providers/UserProvider";
+import { useGameTimer } from "@/hooks/useGameTimer";
 import { Line } from "react-chartjs-2";
 import {
   Chart as ChartJS,
@@ -28,6 +29,8 @@ import {
 } from "chart.js";
 import { FaTrophy, FaMedal, FaAward } from "react-icons/fa";
 import { TbAlertTriangle } from "react-icons/tb";
+import { useEventNews } from "@/hooks/useEventNews";
+import { BOT_PRICES, getMinionDisplayName } from "@/constants/minions";
 
 ChartJS.register(
   CategoryScale,
@@ -45,235 +48,28 @@ interface MainDashboardProps {
   currentUser: User;
 }
 
-// Helper function to get display name for a minion
-// Handles both new minions (with proper display names) and old minions (with backend types)
-function getMinionDisplayName(botName: string): string {
-  // If it's already a display name (has spaces or starts with capital), return as-is
-  if (botName.includes(' ') || /^[A-Z]/.test(botName)) {
-    return botName;
-  }
-  
-  // For old minions with backend types, convert to user-friendly format
-  // e.g., "mean_reversion" → "Mean Reversion Bot"
-  return botName
-    .split('_')
-    .map(word => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ') + ' Bot';
-}
-
 export default function MainDashboard({ game, currentUser }: MainDashboardProps) {
   const { user } = useUser();
   const [amount, setAmount] = useState<string>("");
   const [actionLoading, setActionLoading] = useState<"buy" | "sell" | null>(null);
   const [actionError, setActionError] = useState<string>("");
-  const [timeRemaining, setTimeRemaining] = useState<string>("--:--");
   const [togglingMinion, setTogglingMinion] = useState<string | null>(null);
   const [showLeaderboard, setShowLeaderboard] = useState<boolean>(false);
   const [leaderboard, setLeaderboard] = useState<LeaderboardEntry[]>([]);
   const [rotMultiplier, setRotMultiplier] = useState<number>(1.0);
   const [rotLevel, setRotLevel] = useState<number>(0);
-  const [newsText, setNewsText] = useState<string>("NO NEWS");
-  const [isEventActive, setIsEventActive] = useState<boolean>(false);
-  const [previousEventTriggered, setPreviousEventTriggered] = useState<boolean>(false);
-  const eventTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const genericNewsTimerRef = useRef<NodeJS.Timeout | null>(null);
-  const genericNewsIndexRef = useRef<number>(0);
-  const allGenericNewsRef = useRef<string[]>([]);
-  const isEventActiveRef = useRef<boolean>(false);
-  const currentIntervalRef = useRef<number>(20000); // Track current interval
+
+  // Use event news hook for news banner logic
+  const { newsText, isEventActive } = useEventNews(game);
+
+  // Use game timer hook for time remaining display
+  const { timeRemaining } = useGameTimer(game.startTime, game.duration);
 
   // Safe defaults for optional arrays or values
   const coinsArr = Array.isArray(game.coin) ? game.coin : [];
   const interactionsArr = Array.isArray(game.interactions)
     ? game.interactions
     : [];
-
-  // --- Event News Banner Logic ---
-  useEffect(() => {
-    // If event just triggered (new event), start the timer
-    if (game.eventTriggered && !previousEventTriggered) {
-      // Clear any existing timers (both event timer and generic news rotation)
-      if (eventTimerRef.current) {
-        clearTimeout(eventTimerRef.current);
-        eventTimerRef.current = null;
-      }
-      if (genericNewsTimerRef.current) {
-        clearInterval(genericNewsTimerRef.current);
-        genericNewsTimerRef.current = null;
-      }
-
-      // Event just triggered!
-      setPreviousEventTriggered(true);
-      const newText = game.eventTitle || "MARKET EVENT";
-      setNewsText(newText);
-      setIsEventActive(true);
-      isEventActiveRef.current = true;
-
-      // Set a fallback timer (10 seconds) in case backend doesn't reset in time
-      // But we'll also check backend state on each poll
-      eventTimerRef.current = setTimeout(() => {
-        // Only use timeout if backend still shows event as active
-        // Otherwise, backend already cleared it and we should respect that
-        if (isEventActiveRef.current) {
-          const allGenericNews = (game as any).allGenericNews;
-          if (allGenericNews && Array.isArray(allGenericNews) && allGenericNews.length > 0) {
-            genericNewsIndexRef.current = 0;
-            setNewsText(allGenericNews[0]);
-          } else {
-            const genericNews = (game as any).genericNews || "NO NEWS";
-            setNewsText(genericNews);
-          }
-          setIsEventActive(false);
-          setPreviousEventTriggered(false); // Reset for next event
-          isEventActiveRef.current = false;
-        }
-      }, 10000);
-    }
-
-    // CRITICAL: If backend cleared event_triggered, immediately reset to generic news
-    // This is the primary mechanism - backend controls the timeout
-    if (!game.eventTriggered && previousEventTriggered) {
-      // Clear the frontend timeout since backend already cleared the event
-      if (eventTimerRef.current) {
-        clearTimeout(eventTimerRef.current);
-        eventTimerRef.current = null;
-      }
-      
-      // Reset to generic news immediately
-      setPreviousEventTriggered(false);
-      setIsEventActive(false);
-      isEventActiveRef.current = false;
-      
-      // Set initial generic news - rotation will be handled by the generic news effect
-      const allGenericNews = (game as any).allGenericNews;
-      if (allGenericNews && Array.isArray(allGenericNews) && allGenericNews.length > 0) {
-        genericNewsIndexRef.current = 0;
-        setNewsText(allGenericNews[0]);
-      } else {
-        const genericNews = (game as any).genericNews || "NO NEWS";
-        setNewsText(genericNews);
-      }
-    }
-
-    // Note: Generic news handling is now in a separate useEffect below
-    // This keeps the event logic separate from generic news logic
-
-    // Cleanup on unmount
-    return () => {
-      if (eventTimerRef.current) {
-        clearTimeout(eventTimerRef.current);
-        eventTimerRef.current = null;
-      }
-    };
-  }, [game.eventTriggered, previousEventTriggered, game.eventTitle, (game as any).genericNews]);
-
-  // Effect: Set generic news when it becomes available and rotate every 10 seconds
-  // This should work BEFORE events (when no event has triggered) and AFTER events (when event clears)
-  useEffect(() => {
-    const allGenericNews = (game as any).allGenericNews;
-    
-    // Check if headlines have actually changed by comparing stringified arrays
-    const newHeadlinesStr = allGenericNews && Array.isArray(allGenericNews) 
-      ? JSON.stringify(allGenericNews) 
-      : '';
-    const oldHeadlinesStr = JSON.stringify(allGenericNewsRef.current);
-    const headlinesChanged = newHeadlinesStr !== oldHeadlinesStr;
-    
-    // Set up generic news rotation when:
-    // 1. No event is currently triggered (from backend)
-    // 2. No event is active locally (not showing event news)
-    // This allows rotation both before events and after events clear
-    if (!game.eventTriggered && !isEventActive) {
-      if (allGenericNews && Array.isArray(allGenericNews) && allGenericNews.length > 0) {
-        // Update ref with new headlines
-        allGenericNewsRef.current = allGenericNews;
-        
-        // Only clear and recreate interval if:
-        // 1. Headlines actually changed (content changed)
-        // 2. No interval exists yet (first time setup)
-        // 3. Event state changed (event just cleared)
-        if (headlinesChanged || !genericNewsTimerRef.current) {
-          // Clear existing timer if it exists
-          if (genericNewsTimerRef.current) {
-            clearInterval(genericNewsTimerRef.current);
-            genericNewsTimerRef.current = null;
-          }
-          
-          // If headlines changed, reset index and update display
-          if (headlinesChanged) {
-            genericNewsIndexRef.current = 0;
-            setNewsText(allGenericNews[0]);
-          } else {
-            // Validate current index and newsText
-            const currentIndex = genericNewsIndexRef.current;
-            if (currentIndex >= allGenericNews.length || currentIndex < 0) {
-              genericNewsIndexRef.current = 0;
-              setNewsText(allGenericNews[0]);
-            } else if (!newsText || newsText === "NO NEWS" || !allGenericNews.includes(newsText)) {
-              // If current text is invalid or not in the list, reset to first headline
-              genericNewsIndexRef.current = 0;
-              setNewsText(allGenericNews[0]);
-            }
-          }
-          
-          // Rotate through headlines - slower normally (20s), faster during events (3s)
-          // Use refs to check current state in interval callback (avoids stale closures)
-          const getRotationInterval = () => {
-            // Speed up during events, slow down normally
-            return isEventActiveRef.current ? 3000 : 20000; // 3s during events, 20s normally
-          };
-          
-          // Set up rotation with dynamic interval
-          const rotateNews = () => {
-            if (allGenericNewsRef.current.length > 0) {
-              // Ensure index is valid
-              if (genericNewsIndexRef.current >= allGenericNewsRef.current.length) {
-                genericNewsIndexRef.current = 0;
-              }
-              genericNewsIndexRef.current = (genericNewsIndexRef.current + 1) % allGenericNewsRef.current.length;
-              setNewsText(allGenericNewsRef.current[genericNewsIndexRef.current]);
-              
-              // Check if interval needs to change based on event state
-              const newInterval = getRotationInterval();
-              if (newInterval !== currentIntervalRef.current) {
-                // Clear and recreate with new interval
-                if (genericNewsTimerRef.current) {
-                  clearInterval(genericNewsTimerRef.current);
-                }
-                currentIntervalRef.current = newInterval;
-                genericNewsTimerRef.current = setInterval(rotateNews, currentIntervalRef.current);
-              }
-            }
-          };
-          
-          // Start with initial interval
-          currentIntervalRef.current = getRotationInterval();
-          genericNewsTimerRef.current = setInterval(rotateNews, currentIntervalRef.current);
-        }
-      } else {
-        // Fallback to single generic news if array not available
-        // Clear rotation timer since we don't have headlines to rotate
-        if (genericNewsTimerRef.current) {
-          clearInterval(genericNewsTimerRef.current);
-          genericNewsTimerRef.current = null;
-        }
-        const genericNews = (game as any).genericNews;
-        if (genericNews && genericNews.trim() !== '') {
-          setNewsText(genericNews);
-        }
-      }
-    } else if (game.eventTriggered || isEventActive) {
-      // When event is active, continue rotation but at faster speed
-      // The rotation interval will automatically adjust via the dynamic interval check
-      // Don't stop rotation - let it speed up during events
-    }
-    
-    // Cleanup on unmount
-    return () => {
-      // Only cleanup on unmount or when event state changes
-      // Don't cleanup on every render to avoid interrupting rotation
-    };
-  }, [(game as any).allGenericNews, (game as any).genericNews, game.eventTriggered, isEventActive]);
 
   // Calculate current user's total trades (their own + their bots' trades)
   const currentUserName = currentUser.userName || currentUser.playerName;
@@ -299,51 +95,6 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const priceChangePercent =
     previousPrice !== 0 ? (priceChange / previousPrice) * 100 : 0;
 
-  // --- Timer Logic ---
-  useEffect(() => {
-    if (!game.startTime || !game.isStarted) {
-      setTimeRemaining("--:--");
-      return;
-    }
-
-    const updateTimer = () => {
-      const now = new Date();
-      let startTime: Date;
-
-      if (!game.startTime) return setTimeRemaining("--:--");
-
-      if (
-        typeof game.startTime === "object" &&
-        game.startTime !== null &&
-        "seconds" in game.startTime &&
-        typeof (game.startTime as any).seconds === "number"
-      ) {
-        startTime = new Date((game.startTime as { seconds: number }).seconds * 1000);
-      } else if (game.startTime instanceof Date) {
-        startTime = game.startTime;
-      } else {
-        startTime = new Date(game.startTime as any);
-      }
-
-      const durationMinutes = typeof game.gameDuration === "number" ? game.gameDuration : 0;
-      const endTime = new Date(startTime.getTime() + durationMinutes * 60000);
-      const diff = endTime.getTime() - now.getTime();
-
-      if (diff <= 0) return setTimeRemaining("00:00");
-
-      const minutes = Math.floor(diff / 60000);
-      const seconds = Math.floor((diff % 60000) / 1000);
-      setTimeRemaining(
-        `${minutes.toString().padStart(2, "0")}:${seconds
-          .toString()
-          .padStart(2, "0")}`
-      );
-    };
-
-    updateTimer();
-    const interval = setInterval(updateTimer, 1000);
-    return () => clearInterval(interval);
-  }, [game.startTime, game.gameDuration, game.isStarted]);
 
   // --- Leaderboard Real-time Updates ---
   useEffect(() => {
@@ -592,22 +343,6 @@ export default function MainDashboard({ game, currentUser }: MainDashboardProps)
   const coinsRounded = Number(coins.toFixed(2));
   const effectiveRotLevel = coinsRounded === 0 ? 0 : rotLevel;
   const rotColors = getRotColor(effectiveRotLevel);
-
-  // Bot price mapping for performance calculation
-  const BOT_PRICES: { [key: string]: number } = {
-    "Random Bot": 300,
-    "Momentum Bot": 800,
-    "Mean Reversion Bot": 750,
-    "Market Maker Bot": 1200,
-    "Hedger Bot": 1000,
-    "Custom Minion": 1750,
-    // Backend type names (for backward compatibility)
-    "random": 300,
-    "momentum": 800,
-    "mean_reversion": 750,
-    "market_maker": 1200,
-    "hedger": 1000,
-  };
 
   // --- Chart Data ---
   const DISPLAY_WINDOW_SECONDS = 60;
