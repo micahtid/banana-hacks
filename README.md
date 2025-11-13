@@ -140,15 +140,8 @@ front-end/
 **Banana Rot**: 
 - Cooldown: 1-7.5 seconds (scales with trade size)
 - Decay: Exponential `e^(-coefficient × time)` after cooldown
-- Visual feedback: Color changes from yellow → brown → black
 
 **Minion Performance**:
 - Tracks BC balance and % change since purchase
 - Toggle on/off from Main Dashboard
 - Custom minions use natural language strategy prompts
-
-## Notes
-
-- Start a game via the UI (or `POST /startGame?gameID={id}`) to begin live price updates.
-- Ensure Redis is running locally (default 6379).
-- Front-end polls backend every 1 second for real-time updates.
