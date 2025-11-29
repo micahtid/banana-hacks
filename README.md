@@ -13,8 +13,8 @@ Banana Coin is a simple trading game. You buy and sell coins while its price cha
 
 Copy from `example.env`.
 
-- Back‑end: `REDIS_IP`, `REDIS_PORT`, `REDIS_PASSWORD` (optional)
-- Front‑end: `NEXT_PUBLIC_API_BASE`, Firebase client vars
+- Back‑end: `REDIS_IP`, `REDIS_PORT`, `REDIS_PASSWORD`
+- Front‑end: `NEXT_PUBLIC_API_BASE`, Firebase Client Vars
 
 ## Server Architecture
 
@@ -67,63 +67,46 @@ The front-end is built with **Next.js 14 (App Router)**, **React**, **TypeScript
 
 ```
 front-end/
-├── app/                       # Next.js pages & API routes
+├── app/
 │   ├── api/                   # API route handlers (proxy to Python backend)
 │   ├── create-room/           # Create game room page
 │   ├── game/[gameId]/         # Dynamic game page
-│   ├── globals.css            # Global styles & theme variables
-│   ├── layout.tsx             # Root layout with providers
-│   └── page.tsx               # Landing/home page
-├── components/                # Reusable UI components
-│   ├── game/                  # Game-specific components
+│   ├── globals.css
+│   ├── layout.tsx
+│   └── page.tsx
+├── components/
+│   ├── game/
 │   │   ├── GameDashboard.tsx  # Main game wrapper & navigation
 │   │   ├── MainDashboard.tsx  # Trading dashboard with live chart
 │   │   ├── Shops.tsx          # Minion shop interface
 │   │   ├── Transactions.tsx   # Transaction history
 │   │   └── WaitingRoom.tsx    # Pre-game lobby
-│   ├── Button.tsx             # Reusable button component
-│   ├── Card.tsx               # Reusable card container
-│   ├── Input.tsx              # Reusable input component
-│   ├── Modal.tsx              # Modal overlay component
-│   ├── NewsBanner.tsx         # Scrolling news banner
-│   └── StatDisplay.tsx        # Stat label-value display
-├── hooks/                     # Custom React hooks
+│   ├── Button.tsx
+│   ├── Card.tsx
+│   ├── Input.tsx
+│   ├── Modal.tsx
+│   ├── NewsBanner.tsx
+│   └── StatDisplay.tsx
+├── hooks/
 │   ├── useEventNews.ts        # Event and news state management
 │   └── useGameTimer.ts        # Game timer and countdown logic
-├── constants/                 # Configuration constants
+├── constants/
 │   └── minions.ts             # Bot prices and configurations
-├── providers/                 # React Context providers
+├── providers/
 │   └── UserProvider.tsx       # Firebase auth state management
-└── utils/                     # Utility functions
+└── utils/
     └── database_functions.tsx # Firebase & API client functions
 ```
-
-### Design System
-
-**Theme**: Retro yellow gaming aesthetic with custom CSS variables
-
-**Colors**:
-- Primary: `#d4a017` (Gold yellow)
-- Background: `#fffef5` (Light cream)
-- Success: `#22c55e` (Green)
-- Danger: `#ef4444` (Red)
-
-**Typography**: VT323 (retro monospace font)
-
-**Component Library**:
-- **Button**: Variants (primary, secondary, danger, success) | Sizes (sm, md, lg)
-- **Card**: Configurable padding, optional title
-- **Input**: Built-in label and error display
 
 ### User Flow
 
 1. **Authentication**: Google Sign-In via Firebase Auth
-2. **Create/Join Room**: Set game duration (5-120 min) and max players (2-10)
+2. **Create / Join Room**: Set game duration (5-120 min) and max players (2-10)
 3. **Waiting Room**: Players join, creator starts game
 4. **Game Session**: 
-   - **Main Dashboard**: Live price chart, buy/sell coins, manage minions, view wallet
+   - **Main Dashboard**: Live price chart, buy / sell coins, manage minions, view wallet
    - **Shops**: Purchase 5 prebuilt or custom AI-powered minions ($300-$1750)
-   - **Transactions**: View buy/sell history
+   - **Transactions**: View buy / sell history
 5. **End Game**: Final leaderboard and rankings
 
 ### Key Features
@@ -132,8 +115,6 @@ front-end/
 - **Banana Rot System**: Coins decay exponentially if inactive (encourages trading)
 - **Trading Minions**: Automated bots with different strategies (Random, Momentum, Mean Reversion, Market Maker, Hedger, Custom)
 - **Market Events**: Random events trigger scrolling news banner alerts
-- **Live Leaderboard**: Real-time player rankings by total wealth
-- **Price Chart**: 60-second sliding window with Chart.js
 
 ### Game Mechanics
 
@@ -143,5 +124,4 @@ front-end/
 
 **Minion Performance**:
 - Tracks BC balance and % change since purchase
-- Toggle on/off from Main Dashboard
 - Custom minions use natural language strategy prompts
