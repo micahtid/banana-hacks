@@ -1,6 +1,9 @@
 # Banana Coin
 
-Banana Coin is a simple trading game. You buy and sell coins while its price changes every second. If you stop playing for a while, your wallet slowly rots. You can unlock small “minion” bots that trade for you.
+Banana Coin is a simple trading game. You buy and sell coins while its price changes every second. If you stop playing for a while, your wallet slowly rots. You can unlock small "minion" bots that trade for you.
+
+| <img src="images/1.png" width="300" /> | <img src="images/2.png" width="300" /> | <img src="images/3.png" width="300" /> |
+|:--------------------------------------:|:--------------------------------------:|:--------------------------------------:|
 
 ## Technology
 
