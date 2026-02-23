@@ -191,17 +191,13 @@ class Bot:
         self.bot_name = bot_name or f'Bot_{self.bot_id[:8]}'  # Use provided name or generate default
         self.parameters = self._get_default_parameters()
         
-        # Bot-specific randomness seed based on bot_id for consistent uniqueness
-        self._random_seed = hash(self.bot_id) % 10000
-        random.seed(self._random_seed)
         # behaviorCoefficient: stored as public attribute for Redis persistence
         # Range: 0.8 to 1.2 (represents bot's unique personality/behavior variation)
         if behavior_coefficient is not None:
             self.behavior_coefficient = float(behavior_coefficient)
         else:
             self.behavior_coefficient = 0.8 + (hash(self.bot_id) % 40) / 100.0
-        self._personality_factor = self.behavior_coefficient  # Alias for internal use
-        random.seed()  # Reset to system randomness
+        self._personality_factor = self.behavior_coefficient
     
     def _get_default_parameters(self) -> Dict:
         """Get default parameters based on bot type"""

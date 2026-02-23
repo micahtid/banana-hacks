@@ -9,6 +9,9 @@ from pydantic import BaseModel, Field
 from typing import Optional, Dict, List
 import asyncio
 import time
+import json
+import uuid
+import threading
 import logging
 from datetime import datetime
 
@@ -93,7 +96,6 @@ async def run_market_updates(game_id: str, duration: int, update_interval: float
     start_time = time.time()
     end_time = start_time + duration
     update_count = 0
-    next_update_time = start_time + update_interval
     
     logger.info(f"🎮 Starting market updates for game {game_id} - Duration: {duration}s")
     
@@ -144,7 +146,6 @@ async def run_market_updates(game_id: str, duration: int, update_interval: float
                 logger.warning(f"Market update took {update_elapsed:.3f}s (longer than interval {update_interval}s)")
             
             await asyncio.sleep(sleep_time)
-            next_update_time += update_interval
         
         # Game finished
         logger.info(f"✅ Game {game_id} completed after {duration} seconds, {update_count} updates")
@@ -155,13 +156,12 @@ async def run_market_updates(game_id: str, duration: int, update_interval: float
             await asyncio.to_thread(r.hset, f"game:{game_id}", "isEnded", "true")
             
             # Calculate and cache final leaderboard with final price
-            market = Market.load_from_redis(game_id)
+            market = await asyncio.to_thread(Market.load_from_redis, game_id)
             if market:
                 final_price = market.market_data.current_price
                 game_data = await asyncio.to_thread(r.hgetall, f"game:{game_id}")
                 
                 if game_data:
-                    import json
                     players = json.loads(game_data.get('players', '[]'))
                     
                     # Get all bots for the game
@@ -399,24 +399,19 @@ async def get_market_data(game_id: str, history_limit: int = 100):
     """
     Get current market data including price history.
     """
-    from news_helper import get_random_generic_news, load_generic_news
-    
+    from news_helper import get_random_generic_news, get_cached_generic_news
+
     market = Market.load_from_redis(game_id)
-    
+
     if not market:
         raise HTTPException(status_code=404, detail="Market not found")
-    
+
     # Get recent price history
     price_history = market.market_data.price_history[-history_limit:] if len(market.market_data.price_history) > history_limit else market.market_data.price_history
-    
-    # Get generic news if no event is triggered
-    # Always provide generic news - it will be shown when event is not active
-    generic_news = get_random_generic_news() if not market.event_triggered else get_random_generic_news()
-    
-    # Also provide all headlines for client-side rotation
-    # Create a new list to ensure fresh data and avoid reference issues
-    all_headlines = list(load_generic_news())  # Create new list instance
-    
+
+    generic_news = get_random_generic_news()
+    all_headlines = get_cached_generic_news()
+
     return {
         "gameId": game_id,
         "currentTick": market.current_tick,
@@ -431,7 +426,7 @@ async def get_market_data(game_id: str, history_limit: int = 100):
         "eventTitle": market.event_title,
         "eventTriggered": market.event_triggered,
         "genericNews": generic_news,
-        "allGenericNews": all_headlines  # All headlines for rotation
+        "allGenericNews": all_headlines
     }
 
 
@@ -454,17 +449,16 @@ async def buy_coins(request: TradeRequest):
             market = Market.load_from_redis(request.gameId)
             if not market:
                 raise HTTPException(status_code=404, detail="Market not found")
-            
+
             current_price = market.market_data.current_price
-            
+
             # Get user wallet from Redis (using existing front-end structure)
             r = get_redis_connection()
             game_data = r.hgetall(f"game:{request.gameId}")
-            
+
             if not game_data:
                 raise HTTPException(status_code=404, detail="Game not found")
-            
-            import json
+
             players = json.loads(game_data.get('players', '[]'))
             
             # Find the user (handle both userId and playerId fields)
@@ -540,7 +534,9 @@ async def buy_coins(request: TradeRequest):
                 user_data['coinBalance'] = expected_coins
             user_data['lastInteractionT'] = datetime.now().isoformat()
             user_data['lastInteractionV'] = market.current_tick
-            
+            user_data['lastInteractionTime'] = user_data['lastInteractionT']
+            user_data['lastInteractionValue'] = request.amount
+
             # Update market supplies (ensure non-negative)
             market.dollar_supply = max(0.0, market.dollar_supply + cost)
             market.bc_supply = max(0.0, market.bc_supply - request.amount)
@@ -594,8 +590,7 @@ async def buy_coins(request: TradeRequest):
                 logger.error(f"Error executing buy trade after {max_retries} retries: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
             # Wait a short time before retrying (exponential backoff)
-            import asyncio
-            await asyncio.sleep(0.1 * retry_count)  # 0.1s, 0.2s, 0.3s, etc.
+            await asyncio.sleep(0.1 * retry_count)
             logger.warning(f"Buy trade failed, retrying ({retry_count}/{max_retries}): {e}")
             continue
 
@@ -626,24 +621,22 @@ async def sell_coins(request: TradeRequest):
             # Get user wallet from Redis
             r = get_redis_connection()
             game_data = r.hgetall(f"game:{request.gameId}")
-            
+
             if not game_data:
                 raise HTTPException(status_code=404, detail="Game not found")
-            
-            import json
+
             players = json.loads(game_data.get('players', '[]'))
-            
+
             # Find the user (handle both userId and playerId fields)
             user_data = None
             user_index = None
             for i, player in enumerate(players):
-                # Check both userId and playerId fields for compatibility
                 player_id = player.get('userId') or player.get('playerId')
                 if player_id == request.userId:
                     user_data = player
                     user_index = i
                     break
-            
+
             if not user_data:
                 raise HTTPException(status_code=404, detail="User not found in game")
             
@@ -769,8 +762,7 @@ async def sell_coins(request: TradeRequest):
                 logger.error(f"Error executing sell trade after {max_retries} retries: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
             # Wait a short time before retrying (exponential backoff)
-            import asyncio
-            await asyncio.sleep(0.1 * retry_count)  # 0.1s, 0.2s, 0.3s, etc.
+            await asyncio.sleep(0.1 * retry_count)
             logger.warning(f"Sell trade failed, retrying ({retry_count}/{max_retries}): {e}")
             continue
 
@@ -793,27 +785,23 @@ async def buy_bot(request: BotBuyRequest):
             
             if not game_data:
                 raise HTTPException(status_code=404, detail="Game not found")
-            
-            import json
+
             players = json.loads(game_data.get('players', '[]'))
-            
+
             # Find the user (handle both userId and playerId fields)
             user_data = None
             user_index = None
             for i, player in enumerate(players):
-                # Check both userId and playerId fields for compatibility
                 player_id = player.get('userId') or player.get('playerId')
                 if player_id == request.userId:
                     user_data = player
                     user_index = i
                     break
-            
+
             if not user_data:
                 raise HTTPException(status_code=404, detail="User not found in game")
-            
-            # Check if user has enough USD (handle both usd and usdBalance fields)
-            # This check happens on each retry to ensure funds are still sufficient
-            # Convert to float in case Redis returns strings
+
+            # Check if user has enough USD
             user_usd = float(user_data.get('usd', user_data.get('usdBalance', 0)))
             if user_usd < float(request.cost):
                 raise HTTPException(status_code=400, detail="Insufficient USD")
@@ -858,8 +846,6 @@ async def buy_bot(request: BotBuyRequest):
             if 'bots' not in user_data:
                 user_data['bots'] = []
             
-            # Generate temporary minion ID for the entry
-            import uuid
             bot_id = str(uuid.uuid4())
             
             # Use the display name if provided, otherwise fall back to bot type
@@ -907,7 +893,6 @@ async def buy_bot(request: BotBuyRequest):
             bot.save_to_redis(request.gameId)
             
             # Start minion running in a separate thread
-            import threading
             bot_thread = threading.Thread(
                 target=bot.run,
                 args=(request.gameId,),
@@ -946,8 +931,7 @@ async def buy_bot(request: BotBuyRequest):
                 logger.error(f"Error purchasing minion after {max_retries} retries: {e}")
                 raise HTTPException(status_code=500, detail=str(e))
             # Wait a short time before retrying (exponential backoff)
-            import asyncio
-            await asyncio.sleep(0.1 * retry_count)  # 0.1s, 0.2s, 0.3s, etc.
+            await asyncio.sleep(0.1 * retry_count)
             logger.warning(f"Bot purchase failed, retrying ({retry_count}/{max_retries}): {e}")
             continue
 
@@ -1000,12 +984,12 @@ async def list_user_bots(game_id: str, user_id: str):
         bots_set_key = f"bots:{game_id}"
         bot_ids = r.smembers(bots_set_key)
         
-        # Load user's minions
+        # Load only this user's minions (filter by user_id)
         user_bots = []
         for bot_id_bytes in bot_ids:
             bot_id = bot_id_bytes.decode('utf-8') if isinstance(bot_id_bytes, bytes) else bot_id_bytes
             bot = Bot.load_from_redis(game_id, bot_id)
-            if bot:
+            if bot and bot.user_id == user_id:
                 user_bots.append(bot.to_dict())
         
         return {
@@ -1042,7 +1026,6 @@ async def get_wealth_leaderboard(game_id: str):
             cached_leaderboard = r.get(final_leaderboard_key)
             
             if cached_leaderboard:
-                import json
                 try:
                     final_leaderboard = json.loads(cached_leaderboard)
                     logger.debug(f"Returning cached final leaderboard for ended game {game_id}")
@@ -1077,7 +1060,6 @@ async def get_wealth_leaderboard(game_id: str):
             
             current_price = market.market_data.current_price
         
-        import json
         players = json.loads(game_data.get('players', '[]'))
         
         if not players:

@@ -229,13 +229,7 @@ class Market:
             self.market_data.volatility = 0.0
         
         # Save to Redis after update
-        # Always save, but if event state changed, ensure it's saved immediately
         self.save_to_redis()
-        
-        # If event state changed, save again to ensure it's persisted
-        # This is important for frontend polling to see the state change
-        if event_state_changed:
-            self.save_to_redis()
     
     def _trigger_event(self):
         """Trigger a market event with sudden price change"""

@@ -14,15 +14,18 @@ SERVER_IP = os.getenv("REDIS_IP")
 SERVER_PORT = os.getenv("REDIS_PORT")
 SERVER_PASSWORD = os.getenv("REDIS_PASSWORD")
 
+# Use a connection pool to avoid creating a new connection on every call
+_pool = redis.ConnectionPool(
+    host=SERVER_IP or "localhost",
+    port=int(SERVER_PORT) if SERVER_PORT else 6379,
+    password=SERVER_PASSWORD,
+    decode_responses=True
+)
+
 
 def get_redis_connection() -> redis.Redis:
-    """Get a Redis connection using environment variables"""
-    return redis.Redis(
-        host=SERVER_IP,
-        port=int(SERVER_PORT) if SERVER_PORT else 6379,
-        password=SERVER_PASSWORD,
-        decode_responses=True
-    )
+    """Get a Redis connection from the shared connection pool"""
+    return redis.Redis(connection_pool=_pool)
 
 
 def serialize_datetime(dt: datetime) -> str:
